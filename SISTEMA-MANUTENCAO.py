@@ -31,9 +31,23 @@ from flask_sqlalchemy import SQLAlchemy
 import json
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(BASE_DIR, "os.db")
-BACKUP_DIR = os.path.join(BASE_DIR, "backups")
-os.makedirs(BACKUP_DIR, exist_ok=True)
+
+# ==============================================================================
+# CONFIGURAÇÃO INTELIGENTE DO BANCO DE DADOS (Supabase / Nuvem ou SQLite / Local)
+# ==============================================================================
+database_url = os.environ.get("DATABASE_URL")
+
+if database_url:
+  # O Supabase usa 'postgres://', mas o SQLAlchemy moderno exige 'postgresql://'
+  if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+  app_db_uri = database_url
+  BACKUP_DIR = os.path.join(BASE_DIR, "backups")  # Apenas para compatibilidade
+else:
+  DB_PATH = os.path.join(BASE_DIR, "os.db")
+  BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+  os.makedirs(BACKUP_DIR, exist_ok=True)
+  app_db_uri = f"sqlite:///{DB_PATH}"
 
 
 def carregar_chave_secreta():
@@ -63,7 +77,7 @@ app.config["SECRET_KEY"] = carregar_chave_secreta()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600
-app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
+app.config["SQLALCHEMY_DATABASE_URI"] = app_db_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"timeout": 30}}
 
@@ -72,12 +86,13 @@ db = SQLAlchemy(app)
 
 @event.listens_for(Engine, "connect")
 def configurar_sqlite(dbapi_connection, connection_record):
-  """Ativa WAL mode e Foreign Keys no SQLite para maior concorrência e integridade."""
-  cursor = dbapi_connection.cursor()
-  cursor.execute("PRAGMA journal_mode=WAL;")
-  cursor.execute("PRAGMA synchronous=NORMAL;")
-  cursor.execute("PRAGMA foreign_keys=ON;")
-  cursor.close()
+  """Ativa WAL mode e Foreign Keys no SQLite (caso esteja rodando localmente)."""
+  if "sqlite" in app_db_uri:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.execute("PRAGMA foreign_keys=ON;")
+    cursor.close()
 
 
 # ==============================================================================
@@ -402,6 +417,8 @@ def registrar_auditoria(modulo, acao, detalhes=""):
 
 def backup_automatico_diario():
   """Cria uma cópia diária automática do banco SQLite na pasta backups/ (mantém últimos 15)."""
+  if "sqlite" not in app_db_uri:
+    return
   if not os.path.exists(DB_PATH):
     return
   hoje_str = date.today().strftime("%Y%m%d")
@@ -427,27 +444,28 @@ def inicializar_banco():
   """Cria tabelas e aplica migrações leves sem perda de dados existentes."""
   db.create_all()
   try:
-    cols = [
-        row[1]
-        for row in db.session.execute(
-            text("PRAGMA table_info(ordens_servico)")
-        ).fetchall()
-    ]
-    if "observacao_tecnica" not in cols:
-      db.session.execute(
-          text(
-              "ALTER TABLE ordens_servico ADD COLUMN observacao_tecnica TEXT"
-              " DEFAULT ''"
-          )
-      )
-    if "motivo_pausa" not in cols:
-      db.session.execute(
-          text(
-              "ALTER TABLE ordens_servico ADD COLUMN motivo_pausa"
-              " VARCHAR(200) DEFAULT ''"
-          )
-      )
-    db.session.commit()
+    if "sqlite" in app_db_uri:
+      cols = [
+          row[1]
+          for row in db.session.execute(
+              text("PRAGMA table_info(ordens_servico)")
+          ).fetchall()
+      ]
+      if "observacao_tecnica" not in cols:
+        db.session.execute(
+            text(
+                "ALTER TABLE ordens_servico ADD COLUMN observacao_tecnica TEXT"
+                " DEFAULT ''"
+            )
+        )
+      if "motivo_pausa" not in cols:
+        db.session.execute(
+            text(
+                "ALTER TABLE ordens_servico ADD COLUMN motivo_pausa"
+                " VARCHAR(200) DEFAULT ''"
+            )
+        )
+      db.session.commit()
   except Exception:
     db.session.rollback()
   backup_automatico_diario()
@@ -2285,11 +2303,15 @@ HTML_CENTRAL_GESTAO = r"""
 <!-- ================= 6. GOVERNANÇA ================= -->
 <div id="secao-governanca" class="painel-secao">
     <section class="card">
-        <h2>💾 Segurança e Backup do Banco de Dados (os.db)</h2>
-        <p class="muted">Baixe uma cópia completa do banco SQLite para armazenamento externo.</p>
+        <h2>💾 Segurança e Backup do Banco de Dados</h2>
+        <p class="muted">Gerenciamento e cópias de segurança do banco de dados na nuvem.</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
+            {% if "sqlite" in app_db_uri %}
             <a href="{{url_for('baixar_backup_db')}}" class="botao excel">⬇ Baixar Cópia Completa do Banco (.db)</a>
             <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Tamanho: {{tamanho_db}} KB | {{backups_locais}} backup(s) automático(s)</span>
+            {% else %}
+            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Banco de Dados Externo na Nuvem (Supabase PostgreSQL ativo com backups automáticos integrados).</span>
+            {% endif %}
         </div>
     </section>
 
@@ -2677,8 +2699,11 @@ def healthcheck():
 @app.route("/governanca/backup")
 @requer_login
 def baixar_backup_db():
-  if not os.path.exists(DB_PATH):
-    flash("Banco de dados não encontrado.")
+  if "sqlite" not in app_db_uri or not os.path.exists(DB_PATH):
+    flash(
+        "Backup local via arquivo não aplicável (utilizando banco externo na"
+        " nuvem)."
+    )
     return redirect(url_for("central_gestao"))
   db.session.commit()
   registrar_auditoria(
@@ -3167,11 +3192,13 @@ def central_gestao():
 
   logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
   tamanho_kb = (
-      round(os.path.getsize(DB_PATH) / 1024, 1) if os.path.exists(DB_PATH) else 0
+      round(os.path.getsize(DB_PATH) / 1024, 1)
+      if "sqlite" in app_db_uri and os.path.exists(DB_PATH)
+      else 0
   )
   qtd_backups = (
       len([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")])
-      if os.path.exists(BACKUP_DIR)
+      if "sqlite" in app_db_uri and os.path.exists(BACKUP_DIR)
       else 0
   )
 
