@@ -33,31 +33,15 @@ import json
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 # ==============================================================================
-# CONFIGURAÇÃO INTELIGENTE DO BANCO DE DADOS (Supabase / Nuvem ou SQLite / Local)
+# CONFIGURAÇÃO DO BANCO DE DADOS (SQLite Local)
 # ==============================================================================
-database_url = os.environ.get("DATABASE_URL")
-
-if database_url:
-    # O Supabase usa 'postgres://', mas o SQLAlchemy moderno exige 'postgresql://'
-    if database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql://", 1)
-    # Remove parâmetros extras incompatíveis com psycopg (como timeout)
-    if "?" in database_url:
-        database_url = database_url.split("?")[0]
-    app_db_uri = database_url
-    BACKUP_DIR = os.path.join(BASE_DIR, "backups")  # Apenas para compatibilidade
-else:
-    DB_PATH = os.path.join(BASE_DIR, "os.db")
-    BACKUP_DIR = os.path.join(BASE_DIR, "backups")
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    app_db_uri = f"sqlite:///{DB_PATH}"
+DB_PATH = os.path.join(BASE_DIR, "os.db")
+BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+os.makedirs(BACKUP_DIR, exist_ok=True)
+app_db_uri = f"sqlite:///{DB_PATH}"
 
 
 def carregar_chave_secreta():
-    """Usa SECRET_KEY do ambiente ou gera uma chave aleatória persistente em .secret_key."""
-    chave = os.environ.get("SECRET_KEY")
-    if chave:
-        return chave
     caminho = os.path.join(BASE_DIR, ".secret_key")
     try:
         with open(caminho, "r", encoding="utf-8") as f:
@@ -82,41 +66,36 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600
 app.config["SQLALCHEMY_DATABASE_URI"] = app_db_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-# Timeout apenas se for SQLite local
-if "sqlite" in app_db_uri:
-    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"timeout": 30}}
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"timeout": 30}}
 
 db = SQLAlchemy(app)
 
 
 @event.listens_for(Engine, "connect")
 def configurar_sqlite(dbapi_connection, connection_record):
-    """Ativa WAL mode e Foreign Keys no SQLite (caso esteja rodando localmente)."""
-    if "sqlite" in app_db_uri:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL;")
-        cursor.execute("PRAGMA synchronous=NORMAL;")
-        cursor.execute("PRAGMA foreign_keys=ON;")
-        cursor.close()
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.execute("PRAGMA foreign_keys=ON;")
+    cursor.close()
 
 
 # ==============================================================================
 # CONSTANTES E CONFIGURAÇÕES OPERACIONAIS
 # ==============================================================================
 FORMATO_DATA = "%d/%m/%Y %H:%M:%S"
-PREFIXO_ANO_OS = os.environ.get("PREFIXO_ANO_OS", "26")
-NUMERO_OS_INICIAL = int(os.environ.get("NUMERO_OS_INICIAL", "1897"))
+PREFIXO_ANO_OS = "26"
+NUMERO_OS_INICIAL = 1897
 
-PREFIXO_ANO_SC = os.environ.get("PREFIXO_ANO_SC", "26")
-NUMERO_SC_INICIAL = int(os.environ.get("NUMERO_SC_INICIAL", "495"))
+PREFIXO_ANO_SC = "26"
+NUMERO_SC_INICIAL = 495
 
 os_lock = Lock()
 estoque_lock = Lock()
 sc_lock = Lock()
 
-SISTEMA_USUARIO = os.environ.get("SISTEMA_USUARIO", "manutencao")
-SISTEMA_SENHA = os.environ.get("SISTEMA_SENHA", "manutencao123")
+SISTEMA_USUARIO = "manutencao"
+SISTEMA_SENHA = "manutencao123"
 MAX_TENTATIVAS_LOGIN = 5
 BLOQUEIO_LOGIN_SEG = 300
 tentativas_login = {}
@@ -406,7 +385,6 @@ class LogAuditoria(db.Model):
 
 
 def registrar_auditoria(modulo, acao, detalhes=""):
-    """Registra eventos críticos de governança no banco sem interromper o fluxo principal."""
     try:
         db.session.add(
             LogAuditoria(
@@ -422,9 +400,6 @@ def registrar_auditoria(modulo, acao, detalhes=""):
 
 
 def backup_automatico_diario():
-    """Cria uma cópia diária automática do banco SQLite na pasta backups/ (mantém últimos 15)."""
-    if "sqlite" not in app_db_uri:
-        return
     if not os.path.exists(DB_PATH):
         return
     hoje_str = date.today().strftime("%Y%m%d")
@@ -447,31 +422,29 @@ def backup_automatico_diario():
 
 
 def inicializar_banco():
-    """Cria tabelas e aplica migrações leves sem perda de dados existentes."""
     db.create_all()
     try:
-        if "sqlite" in app_db_uri:
-            cols = [
-                row[1]
-                for row in db.session.execute(
-                    text("PRAGMA table_info(ordens_servico)")
-                ).fetchall()
-            ]
-            if "observacao_tecnica" not in cols:
-                db.session.execute(
-                    text(
-                        "ALTER TABLE ordens_servico ADD COLUMN"
-                        " observacao_tecnica TEXT DEFAULT ''"
-                    )
+        cols = [
+            row[1]
+            for row in db.session.execute(
+                text("PRAGMA table_info(ordens_servico)")
+            ).fetchall()
+        ]
+        if "observacao_tecnica" not in cols:
+            db.session.execute(
+                text(
+                    "ALTER TABLE ordens_servico ADD COLUMN"
+                    " observacao_tecnica TEXT DEFAULT ''"
                 )
-            if "motivo_pausa" not in cols:
-                db.session.execute(
-                    text(
-                        "ALTER TABLE ordens_servico ADD COLUMN motivo_pausa"
-                        " VARCHAR(200) DEFAULT ''"
-                    )
+            )
+        if "motivo_pausa" not in cols:
+            db.session.execute(
+                text(
+                    "ALTER TABLE ordens_servico ADD COLUMN motivo_pausa"
+                    " VARCHAR(200) DEFAULT ''"
                 )
-            db.session.commit()
+            )
+        db.session.commit()
     except Exception:
         db.session.rollback()
     backup_automatico_diario()
@@ -2310,14 +2283,10 @@ HTML_CENTRAL_GESTAO = r"""
 <div id="secao-governanca" class="painel-secao">
     <section class="card">
         <h2>💾 Segurança e Backup do Banco de Dados</h2>
-        <p class="muted">Gerenciamento e cópias de segurança do banco de dados na nuvem.</p>
+        <p class="muted">Gerenciamento e cópias de segurança do banco SQLite local (`os.db`).</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
-            {% if "sqlite" in app_db_uri %}
             <a href="{{url_for('baixar_backup_db')}}" class="botao excel">⬇ Baixar Cópia Completa do Banco (.db)</a>
             <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Tamanho: {{tamanho_db}} KB | {{backups_locais}} backup(s) automático(s)</span>
-            {% else %}
-            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Banco de Dados Externo na Nuvem (Supabase PostgreSQL ativo com backups automáticos integrados).</span>
-            {% endif %}
         </div>
     </section>
 
@@ -2705,11 +2674,8 @@ def healthcheck():
 @app.route("/governanca/backup")
 @requer_login
 def baixar_backup_db():
-    if "sqlite" not in app_db_uri or not os.path.exists(DB_PATH):
-        flash(
-            "Backup local via arquivo não aplicável (utilizando banco externo na"
-            " nuvem)."
-        )
+    if not os.path.exists(DB_PATH):
+        flash("Arquivo de banco de dados não encontrado.")
         return redirect(url_for("central_gestao"))
     db.session.commit()
     registrar_auditoria(
@@ -3199,12 +3165,12 @@ def central_gestao():
     logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
     tamanho_kb = (
         round(os.path.getsize(DB_PATH) / 1024, 1)
-        if "sqlite" in app_db_uri and os.path.exists(DB_PATH)
+        if os.path.exists(DB_PATH)
         else 0
     )
     qtd_backups = (
         len([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")])
-        if "sqlite" in app_db_uri and os.path.exists(BACKUP_DIR)
+        if os.path.exists(BACKUP_DIR)
         else 0
     )
 
@@ -3252,7 +3218,6 @@ def central_gestao():
     )
 
 
-# --- ROTAS DE AÇÕES AUXILIARES DA CENTRAL ---
 @app.route("/estoque/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_peca():
