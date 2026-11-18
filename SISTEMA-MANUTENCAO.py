@@ -38,38 +38,41 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 database_url = os.environ.get("DATABASE_URL")
 
 if database_url:
-  # O Supabase usa 'postgres://', mas o SQLAlchemy moderno exige 'postgresql://'
-  if database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql://", 1)
-  app_db_uri = database_url
-  BACKUP_DIR = os.path.join(BASE_DIR, "backups")  # Apenas para compatibilidade
+    # O Supabase usa 'postgres://', mas o SQLAlchemy moderno exige 'postgresql://'
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    # Remove parâmetros extras incompatíveis com psycopg (como timeout)
+    if "?" in database_url:
+        database_url = database_url.split("?")[0]
+    app_db_uri = database_url
+    BACKUP_DIR = os.path.join(BASE_DIR, "backups")  # Apenas para compatibilidade
 else:
-  DB_PATH = os.path.join(BASE_DIR, "os.db")
-  BACKUP_DIR = os.path.join(BASE_DIR, "backups")
-  os.makedirs(BACKUP_DIR, exist_ok=True)
-  app_db_uri = f"sqlite:///{DB_PATH}"
+    DB_PATH = os.path.join(BASE_DIR, "os.db")
+    BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    app_db_uri = f"sqlite:///{DB_PATH}"
 
 
 def carregar_chave_secreta():
-  """Usa SECRET_KEY do ambiente ou gera uma chave aleatória persistente em .secret_key."""
-  chave = os.environ.get("SECRET_KEY")
-  if chave:
-    return chave
-  caminho = os.path.join(BASE_DIR, ".secret_key")
-  try:
-    with open(caminho, "r", encoding="utf-8") as f:
-      valor = f.read().strip()
-      if valor:
-        return valor
-  except OSError:
-    pass
-  valor = secrets.token_hex(32)
-  try:
-    with open(caminho, "w", encoding="utf-8") as f:
-      f.write(valor)
-  except OSError:
-    pass
-  return valor
+    """Usa SECRET_KEY do ambiente ou gera uma chave aleatória persistente em .secret_key."""
+    chave = os.environ.get("SECRET_KEY")
+    if chave:
+        return chave
+    caminho = os.path.join(BASE_DIR, ".secret_key")
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            valor = f.read().strip()
+            if valor:
+                return valor
+    except OSError:
+        pass
+    valor = secrets.token_hex(32)
+    try:
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write(valor)
+    except OSError:
+        pass
+    return valor
 
 
 app = Flask(__name__)
@@ -79,20 +82,23 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600
 app.config["SQLALCHEMY_DATABASE_URI"] = app_db_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"timeout": 30}}
+
+# Timeout apenas se for SQLite local
+if "sqlite" in app_db_uri:
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"timeout": 30}}
 
 db = SQLAlchemy(app)
 
 
 @event.listens_for(Engine, "connect")
 def configurar_sqlite(dbapi_connection, connection_record):
-  """Ativa WAL mode e Foreign Keys no SQLite (caso esteja rodando localmente)."""
-  if "sqlite" in app_db_uri:
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL;")
-    cursor.execute("PRAGMA synchronous=NORMAL;")
-    cursor.execute("PRAGMA foreign_keys=ON;")
-    cursor.close()
+    """Ativa WAL mode e Foreign Keys no SQLite (caso esteja rodando localmente)."""
+    if "sqlite" in app_db_uri:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.close()
 
 
 # ==============================================================================
@@ -279,200 +285,200 @@ PWA_HEAD = f"""
 # MODELOS DE BANCO DE DADOS
 # ==============================================================================
 class OrdemServico(db.Model):
-  __tablename__ = "ordens_servico"
-  id = db.Column(db.Integer, primary_key=True)
-  numero_os = db.Column(db.String(20), unique=True, nullable=False, index=True)
-  solicitante = db.Column(db.String(100), nullable=False)
-  setor = db.Column(db.String(100), default="")
-  titulo = db.Column(db.String(200), default="")
-  descricao = db.Column(db.Text, default="")
-  prioridade = db.Column(db.String(30), default="Média")
-  responsavel = db.Column(db.String(100), default="")
-  abertura = db.Column(db.String(50), nullable=False)
-  finalizacao = db.Column(db.String(50), default="")
-  status = db.Column(db.String(50), default="Aberta", index=True)
-  tempo_total = db.Column(db.String(50), default="")
-  tipo_manutencao = db.Column(db.String(30), default="")
-  funcionarios = db.Column(db.String(200), default="")
-  horas_trabalhadas = db.Column(db.Float, default=0.0)
-  observacao_tecnica = db.Column(db.Text, default="")
-  motivo_pausa = db.Column(db.String(200), default="")
+    __tablename__ = "ordens_servico"
+    id = db.Column(db.Integer, primary_key=True)
+    numero_os = db.Column(db.String(20), unique=True, nullable=False, index=True)
+    solicitante = db.Column(db.String(100), nullable=False)
+    setor = db.Column(db.String(100), default="")
+    titulo = db.Column(db.String(200), default="")
+    descricao = db.Column(db.Text, default="")
+    prioridade = db.Column(db.String(30), default="Média")
+    responsavel = db.Column(db.String(100), default="")
+    abertura = db.Column(db.String(50), nullable=False)
+    finalizacao = db.Column(db.String(50), default="")
+    status = db.Column(db.String(50), default="Aberta", index=True)
+    tempo_total = db.Column(db.String(50), default="")
+    tipo_manutencao = db.Column(db.String(30), default="")
+    funcionarios = db.Column(db.String(200), default="")
+    horas_trabalhadas = db.Column(db.Float, default=0.0)
+    observacao_tecnica = db.Column(db.Text, default="")
+    motivo_pausa = db.Column(db.String(200), default="")
 
 
 class ItemEstoque(db.Model):
-  __tablename__ = "itens_estoque"
-  id = db.Column(db.Integer, primary_key=True)
-  codigo = db.Column(db.String(50), unique=True, nullable=False, index=True)
-  nome = db.Column(db.String(150), nullable=False)
-  categoria = db.Column(db.String(100), default="Geral")
-  localizacao = db.Column(db.String(100), default="")
-  quantidade = db.Column(db.Integer, nullable=False, default=0)
-  estoque_minimo = db.Column(db.Integer, nullable=False, default=2)
-  ultima_atualizacao = db.Column(db.String(50), nullable=False)
+    __tablename__ = "itens_estoque"
+    id = db.Column(db.Integer, primary_key=True)
+    codigo = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    nome = db.Column(db.String(150), nullable=False)
+    categoria = db.Column(db.String(100), default="Geral")
+    localizacao = db.Column(db.String(100), default="")
+    quantidade = db.Column(db.Integer, nullable=False, default=0)
+    estoque_minimo = db.Column(db.Integer, nullable=False, default=2)
+    ultima_atualizacao = db.Column(db.String(50), nullable=False)
 
 
 class HistoricoMovimentacao(db.Model):
-  __tablename__ = "historico_movimentacoes"
-  id = db.Column(db.Integer, primary_key=True)
-  peca_codigo = db.Column(db.String(50), nullable=False, index=True)
-  peca_nome = db.Column(db.String(150), nullable=False)
-  tipo = db.Column(db.String(20), nullable=False)
-  quantidade = db.Column(db.Integer, nullable=False)
-  solicitante = db.Column(db.String(100), default="")
-  data_hora = db.Column(db.String(50), nullable=False)
+    __tablename__ = "historico_movimentacoes"
+    id = db.Column(db.Integer, primary_key=True)
+    peca_codigo = db.Column(db.String(50), nullable=False, index=True)
+    peca_nome = db.Column(db.String(150), nullable=False)
+    tipo = db.Column(db.String(20), nullable=False)
+    quantidade = db.Column(db.Integer, nullable=False)
+    solicitante = db.Column(db.String(100), default="")
+    data_hora = db.Column(db.String(50), nullable=False)
 
 
 class MaquinaSpare(db.Model):
-  __tablename__ = "maquinas_spare"
-  id = db.Column(db.Integer, primary_key=True)
-  maquina = db.Column(db.String(150), nullable=False)
-  modelo = db.Column(db.String(100), nullable=False)
-  setor = db.Column(db.String(100), default="")
-  pecas_necessarias = db.Column(db.Text, default="")
-  pecas = db.relationship(
-      "PecaSpare", backref="maquina_spare", cascade="all, delete-orphan"
-  )
+    __tablename__ = "maquinas_spare"
+    id = db.Column(db.Integer, primary_key=True)
+    maquina = db.Column(db.String(150), nullable=False)
+    modelo = db.Column(db.String(100), nullable=False)
+    setor = db.Column(db.String(100), default="")
+    pecas_necessarias = db.Column(db.Text, default="")
+    pecas = db.relationship(
+        "PecaSpare", backref="maquina_spare", cascade="all, delete-orphan"
+    )
 
 
 class PecaSpare(db.Model):
-  __tablename__ = "pecas_spare"
-  id = db.Column(db.Integer, primary_key=True)
-  maquina_spare_id = db.Column(
-      db.Integer, db.ForeignKey("maquinas_spare.id"), nullable=False
-  )
-  nome_peca = db.Column(db.String(150), nullable=False)
-  codigo_peca = db.Column(db.String(50), default="")
-  quantidade = db.Column(db.Integer, default=1)
-  observacao = db.Column(db.String(200), default="")
+    __tablename__ = "pecas_spare"
+    id = db.Column(db.Integer, primary_key=True)
+    maquina_spare_id = db.Column(
+        db.Integer, db.ForeignKey("maquinas_spare.id"), nullable=False
+    )
+    nome_peca = db.Column(db.String(150), nullable=False)
+    codigo_peca = db.Column(db.String(50), default="")
+    quantidade = db.Column(db.Integer, default=1)
+    observacao = db.Column(db.String(200), default="")
 
 
 class PlanoPreventivo(db.Model):
-  __tablename__ = "planos_preventivos"
-  id = db.Column(db.Integer, primary_key=True)
-  maquina = db.Column(db.String(150), nullable=False)
-  codigo_maquina = db.Column(db.String(50), default="")
-  setor = db.Column(db.String(100), default="")
-  atividade = db.Column(db.Text, nullable=False)
-  frequencia = db.Column(db.String(50), default="Mensal")
-  responsavel = db.Column(db.String(100), default="")
-  proxima_execucao = db.Column(db.String(50), nullable=False)
-  status = db.Column(db.String(30), default="Agendado")
+    __tablename__ = "planos_preventivos"
+    id = db.Column(db.Integer, primary_key=True)
+    maquina = db.Column(db.String(150), nullable=False)
+    codigo_maquina = db.Column(db.String(50), default="")
+    setor = db.Column(db.String(100), default="")
+    atividade = db.Column(db.Text, nullable=False)
+    frequencia = db.Column(db.String(50), default="Mensal")
+    responsavel = db.Column(db.String(100), default="")
+    proxima_execucao = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(30), default="Agendado")
 
 
 class SolicitacaoCompra(db.Model):
-  __tablename__ = "solicitacoes_compras"
-  id = db.Column(db.Integer, primary_key=True)
-  numero_sc = db.Column(db.String(100), nullable=False, index=True)
-  tipo_sc = db.Column(db.String(50), default="S.C. Emergencial")
-  solicitante = db.Column(db.String(100), nullable=False)
-  setor_solicitante = db.Column(db.String(100), default="")
-  responsaveis_duvidas = db.Column(db.String(150), default="")
-  centro_custo = db.Column(db.String(150), default="")
-  objeto_solicitacao = db.Column(db.String(250), nullable=False)
-  data_solicitacao = db.Column(db.String(50), nullable=False)
-  status_aprovacao = db.Column(db.String(50), default="Aguardando Aprovação")
-  itens = db.relationship(
-      "ItemSolicitacaoCompra",
-      backref="solicitacao_compra",
-      cascade="all, delete-orphan",
-  )
+    __tablename__ = "solicitacoes_compras"
+    id = db.Column(db.Integer, primary_key=True)
+    numero_sc = db.Column(db.String(100), nullable=False, index=True)
+    tipo_sc = db.Column(db.String(50), default="S.C. Emergencial")
+    solicitante = db.Column(db.String(100), nullable=False)
+    setor_solicitante = db.Column(db.String(100), default="")
+    responsaveis_duvidas = db.Column(db.String(150), default="")
+    centro_custo = db.Column(db.String(150), default="")
+    objeto_solicitacao = db.Column(db.String(250), nullable=False)
+    data_solicitacao = db.Column(db.String(50), nullable=False)
+    status_aprovacao = db.Column(db.String(50), default="Aguardando Aprovação")
+    itens = db.relationship(
+        "ItemSolicitacaoCompra",
+        backref="solicitacao_compra",
+        cascade="all, delete-orphan",
+    )
 
 
 class ItemSolicitacaoCompra(db.Model):
-  __tablename__ = "itens_solicitacoes_compras"
-  id = db.Column(db.Integer, primary_key=True)
-  solicitacao_id = db.Column(
-      db.Integer, db.ForeignKey("solicitacoes_compras.id"), nullable=False
-  )
-  descritivo = db.Column(db.Text, nullable=False)
-  quantidade = db.Column(db.Integer, default=1)
-  unidade = db.Column(db.String(20), default="Un")
-  link_referencia = db.Column(db.Text, default="")
+    __tablename__ = "itens_solicitacoes_compras"
+    id = db.Column(db.Integer, primary_key=True)
+    solicitacao_id = db.Column(
+        db.Integer, db.ForeignKey("solicitacoes_compras.id"), nullable=False
+    )
+    descritivo = db.Column(db.Text, nullable=False)
+    quantidade = db.Column(db.Integer, default=1)
+    unidade = db.Column(db.String(20), default="Un")
+    link_referencia = db.Column(db.Text, default="")
 
 
 class LogAuditoria(db.Model):
-  __tablename__ = "logs_auditoria"
-  id = db.Column(db.Integer, primary_key=True)
-  data_hora = db.Column(db.String(50), nullable=False)
-  modulo = db.Column(db.String(50), nullable=False)
-  acao = db.Column(db.String(100), nullable=False)
-  detalhes = db.Column(db.Text, default="")
+    __tablename__ = "logs_auditoria"
+    id = db.Column(db.Integer, primary_key=True)
+    data_hora = db.Column(db.String(50), nullable=False)
+    modulo = db.Column(db.String(50), nullable=False)
+    acao = db.Column(db.String(100), nullable=False)
+    detalhes = db.Column(db.Text, default="")
 
 
 def registrar_auditoria(modulo, acao, detalhes=""):
-  """Registra eventos críticos de governança no banco sem interromper o fluxo principal."""
-  try:
-    db.session.add(
-        LogAuditoria(
-            data_hora=agora_formatado(),
-            modulo=modulo,
-            acao=acao,
-            detalhes=detalhes,
+    """Registra eventos críticos de governança no banco sem interromper o fluxo principal."""
+    try:
+        db.session.add(
+            LogAuditoria(
+                data_hora=agora_formatado(),
+                modulo=modulo,
+                acao=acao,
+                detalhes=detalhes,
+            )
         )
-    )
-    db.session.commit()
-  except Exception:
-    db.session.rollback()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 def backup_automatico_diario():
-  """Cria uma cópia diária automática do banco SQLite na pasta backups/ (mantém últimos 15)."""
-  if "sqlite" not in app_db_uri:
-    return
-  if not os.path.exists(DB_PATH):
-    return
-  hoje_str = date.today().strftime("%Y%m%d")
-  destino = os.path.join(BACKUP_DIR, f"os_backup_{hoje_str}.db")
-  if not os.path.exists(destino):
-    try:
-      shutil.copy2(DB_PATH, destino)
-      arquivos = sorted(
-          [
-              os.path.join(BACKUP_DIR, f)
-              for f in os.listdir(BACKUP_DIR)
-              if f.endswith(".db")
-          ],
-          key=os.path.getmtime,
-      )
-      for antigo in arquivos[:-15]:
-        os.remove(antigo)
-    except OSError:
-      pass
+    """Cria uma cópia diária automática do banco SQLite na pasta backups/ (mantém últimos 15)."""
+    if "sqlite" not in app_db_uri:
+        return
+    if not os.path.exists(DB_PATH):
+        return
+    hoje_str = date.today().strftime("%Y%m%d")
+    destino = os.path.join(BACKUP_DIR, f"os_backup_{hoje_str}.db")
+    if not os.path.exists(destino):
+        try:
+            shutil.copy2(DB_PATH, destino)
+            arquivos = sorted(
+                [
+                    os.path.join(BACKUP_DIR, f)
+                    for f in os.listdir(BACKUP_DIR)
+                    if f.endswith(".db")
+                ],
+                key=os.path.getmtime,
+            )
+            for antigo in arquivos[:-15]:
+                os.remove(antigo)
+        except OSError:
+            pass
 
 
 def inicializar_banco():
-  """Cria tabelas e aplica migrações leves sem perda de dados existentes."""
-  db.create_all()
-  try:
-    if "sqlite" in app_db_uri:
-      cols = [
-          row[1]
-          for row in db.session.execute(
-              text("PRAGMA table_info(ordens_servico)")
-          ).fetchall()
-      ]
-      if "observacao_tecnica" not in cols:
-        db.session.execute(
-            text(
-                "ALTER TABLE ordens_servico ADD COLUMN observacao_tecnica TEXT"
-                " DEFAULT ''"
-            )
-        )
-      if "motivo_pausa" not in cols:
-        db.session.execute(
-            text(
-                "ALTER TABLE ordens_servico ADD COLUMN motivo_pausa"
-                " VARCHAR(200) DEFAULT ''"
-            )
-        )
-      db.session.commit()
-  except Exception:
-    db.session.rollback()
-  backup_automatico_diario()
+    """Cria tabelas e aplica migrações leves sem perda de dados existentes."""
+    db.create_all()
+    try:
+        if "sqlite" in app_db_uri:
+            cols = [
+                row[1]
+                for row in db.session.execute(
+                    text("PRAGMA table_info(ordens_servico)")
+                ).fetchall()
+            ]
+            if "observacao_tecnica" not in cols:
+                db.session.execute(
+                    text(
+                        "ALTER TABLE ordens_servico ADD COLUMN"
+                        " observacao_tecnica TEXT DEFAULT ''"
+                    )
+                )
+            if "motivo_pausa" not in cols:
+                db.session.execute(
+                    text(
+                        "ALTER TABLE ordens_servico ADD COLUMN motivo_pausa"
+                        " VARCHAR(200) DEFAULT ''"
+                    )
+                )
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+    backup_automatico_diario()
 
 
 with app.app_context():
-  inicializar_banco()
+    inicializar_banco()
 
 
 # ==============================================================================
@@ -480,29 +486,29 @@ with app.app_context():
 # ==============================================================================
 @app.route("/manifest.json")
 def manifest_pwa():
-  return jsonify({
-      "name": "Central de Manutenção JAMAICA",
-      "short_name": "Manutenção",
-      "description": (
-          "Gestão de Ordens de Serviço, Estoque, PCM e Compras — JAMAICA"
-      ),
-      "start_url": "/",
-      "display": "standalone",
-      "orientation": "any",
-      "background_color": "#08090c",
-      "theme_color": "#f97316",
-      "icons": [{
-          "src": FAVICON_J,
-          "sizes": "192x192 512x512",
-          "type": "image/svg+xml",
-          "purpose": "any maskable",
-      }],
-  })
+    return jsonify({
+        "name": "Central de Manutenção JAMAICA",
+        "short_name": "Manutenção",
+        "description": (
+            "Gestão de Ordens de Serviço, Estoque, PCM e Compras — JAMAICA"
+        ),
+        "start_url": "/",
+        "display": "standalone",
+        "orientation": "any",
+        "background_color": "#08090c",
+        "theme_color": "#f97316",
+        "icons": [{
+            "src": FAVICON_J,
+            "sizes": "192x192 512x512",
+            "type": "image/svg+xml",
+            "purpose": "any maskable",
+        }],
+    })
 
 
 @app.route("/sw.js")
 def service_worker():
-  sw_code = """
+    sw_code = """
     const CACHE_NAME = 'manutencao-jamaica-v1';
     self.addEventListener('install', event => {
         self.skipWaiting();
@@ -517,275 +523,275 @@ def service_worker():
         );
     });
     """
-  return Response(sw_code, mimetype="application/javascript")
+    return Response(sw_code, mimetype="application/javascript")
 
 
 # ==============================================================================
 # FUNÇÕES UTILITÁRIAS E SEGURANÇA
 # ==============================================================================
 def agora_formatado():
-  return datetime.now().strftime(FORMATO_DATA)
+    return datetime.now().strftime(FORMATO_DATA)
 
 
 def hoje_iso():
-  return date.today().strftime("%Y-%m-%d")
+    return date.today().strftime("%Y-%m-%d")
 
 
 def gerar_numero_os():
-  numeros = OrdemServico.query.with_entities(OrdemServico.numero_os).all()
-  maior = NUMERO_OS_INICIAL - 1
-  for (numero,) in numeros:
-    try:
-      maior = max(maior, int(numero.split("-")[0]))
-    except (ValueError, AttributeError, IndexError):
-      pass
-  return f"{maior + 1}-{PREFIXO_ANO_OS}"
+    numeros = OrdemServico.query.with_entities(OrdemServico.numero_os).all()
+    maior = NUMERO_OS_INICIAL - 1
+    for (numero,) in numeros:
+        try:
+            maior = max(maior, int(numero.split("-")[0]))
+        except (ValueError, AttributeError, IndexError):
+            pass
+    return f"{maior + 1}-{PREFIXO_ANO_OS}"
 
 
 def gerar_numero_sc():
-  numeros = SolicitacaoCompra.query.with_entities(
-      SolicitacaoCompra.numero_sc
-  ).all()
-  maior = NUMERO_SC_INICIAL - 1
-  for (numero,) in numeros:
-    if not numero:
-      continue
-    match = re.search(r"(\d{4})", numero)
-    if match:
-      try:
-        maior = max(maior, int(match.group(1)))
-      except ValueError:
-        pass
-  proximo = maior + 1
-  return f"01 – S.C. – {proximo:04d} – {PREFIXO_ANO_SC}"
+    numeros = SolicitacaoCompra.query.with_entities(
+        SolicitacaoCompra.numero_sc
+    ).all()
+    maior = NUMERO_SC_INICIAL - 1
+    for (numero,) in numeros:
+        if not numero:
+            continue
+        match = re.search(r"(\d{4})", numero)
+        if match:
+            try:
+                maior = max(maior, int(match.group(1)))
+            except ValueError:
+                pass
+    proximo = maior + 1
+    return f"01 – S.C. – {proximo:04d} – {PREFIXO_ANO_SC}"
 
 
 def calcular_tempo_total(abertura, finalizacao):
-  inicio = datetime.strptime(abertura, FORMATO_DATA)
-  fim = datetime.strptime(finalizacao, FORMATO_DATA)
-  segundos = max(0, int((fim - inicio).total_seconds()))
-  dias, resto = divmod(segundos, 86400)
-  horas, resto = divmod(resto, 3600)
-  minutos, _ = divmod(resto, 60)
-  partes = []
-  if dias:
-    partes.append(f"{dias}d")
-  if horas:
-    partes.append(f"{horas}h")
-  partes.append(f"{minutos}min")
-  return " ".join(partes)
+    inicio = datetime.strptime(abertura, FORMATO_DATA)
+    fim = datetime.strptime(finalizacao, FORMATO_DATA)
+    segundos = max(0, int((fim - inicio).total_seconds()))
+    dias, resto = divmod(segundos, 86400)
+    horas, resto = divmod(resto, 3600)
+    minutos, _ = divmod(resto, 60)
+    partes = []
+    if dias:
+        partes.append(f"{dias}d")
+    if horas:
+        partes.append(f"{horas}h")
+    partes.append(f"{minutos}min")
+    return " ".join(partes)
 
 
 def tempo_hhmm_para_horas_decimais(hhmm_str):
-  if not hhmm_str or ":" not in hhmm_str:
-    return 0.0
-  try:
-    partes = hhmm_str.split(":")
-    h = int(partes[0])
-    m = int(partes[1])
-    return round(h + (m / 60.0), 2)
-  except (ValueError, IndexError):
-    return 0.0
+    if not hhmm_str or ":" not in hhmm_str:
+        return 0.0
+    try:
+        partes = hhmm_str.split(":")
+        h = int(partes[0])
+        m = int(partes[1])
+        return round(h + (m / 60.0), 2)
+    except (ValueError, IndexError):
+        return 0.0
 
 
 def horas_decimais_para_hhmm(horas_float):
-  if not horas_float or horas_float <= 0:
-    return "0h 00min"
-  h = int(horas_float)
-  m = int(round((horas_float - h) * 60))
-  if m == 60:
-    h += 1
-    m = 0
-  return f"{h}h {m:02d}min"
+    if not horas_float or horas_float <= 0:
+        return "0h 00min"
+    h = int(horas_float)
+    m = int(round((horas_float - h) * 60))
+    if m == 60:
+        h += 1
+        m = 0
+    return f"{h}h {m:02d}min"
 
 
 def token_csrf():
-  if "csrf_token" not in session:
-    session["csrf_token"] = secrets.token_hex(16)
-  return session["csrf_token"]
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(16)
+    return session["csrf_token"]
 
 
 @app.before_request
 def proteger_csrf():
-  if request.method != "POST":
-    return None
-  enviado = request.form.get("csrf_token", "") or request.headers.get(
-      "X-CSRF-Token", ""
-  )
-  esperado = session.get("csrf_token", "")
-  if not esperado or not hmac.compare_digest(
-      enviado.encode(), esperado.encode()
-  ):
-    if (
-        request.is_json
-        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
-    ):
-      return (
-          jsonify(
-              {"ok": False, "erro": "Token CSRF inválido. Recarregue a página."}
-          ),
-          400,
-      )
-    flash(
-        "Sessão expirada ou requisição inválida. Recarregue a página e tente"
-        " novamente."
+    if request.method != "POST":
+        return None
+    enviado = request.form.get("csrf_token", "") or request.headers.get(
+        "X-CSRF-Token", ""
     )
-    return redirect(request.referrer or url_for("dashboard"))
-  return None
+    esperado = session.get("csrf_token", "")
+    if not esperado or not hmac.compare_digest(
+        enviado.encode(), esperado.encode()
+    ):
+        if (
+            request.is_json
+            or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        ):
+            return (
+                jsonify(
+                    {"ok": False, "erro": "Token CSRF inválido. Recarregue a página."}
+                ),
+                400,
+            )
+        flash(
+            "Sessão expirada ou requisição inválida. Recarregue a página e tente"
+            " novamente."
+        )
+        return redirect(request.referrer or url_for("dashboard"))
+    return None
 
 
 @app.after_request
 def adicionar_headers_seguranca(response):
-  response.headers["X-Content-Type-Options"] = "nosniff"
-  response.headers["X-Frame-Options"] = "SAMEORIGIN"
-  response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-  return response
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 def parse_data_br(texto):
-  for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-    try:
-      return datetime.strptime((texto or "").strip(), fmt).date()
-    except ValueError:
-      continue
-  return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime((texto or "").strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def somar_meses(data, meses):
-  indice = data.month - 1 + meses
-  ano = data.year + indice // 12
-  mes = indice % 12 + 1
-  dia = min(data.day, calendar.monthrange(ano, mes)[1])
-  return date(ano, mes, dia)
+    indice = data.month - 1 + meses
+    ano = data.year + indice // 12
+    mes = indice % 12 + 1
+    dia = min(data.day, calendar.monthrange(ano, mes)[1])
+    return date(ano, mes, dia)
 
 
 def avancar_data(data, frequencia):
-  tipo, valor = FREQUENCIA_PCM.get(frequencia, ("meses", 1))
-  if tipo == "dias":
-    return data + timedelta(days=valor)
-  return somar_meses(data, valor)
+    tipo, valor = FREQUENCIA_PCM.get(frequencia, ("meses", 1))
+    if tipo == "dias":
+        return data + timedelta(days=valor)
+    return somar_meses(data, valor)
 
 
 def status_plano(plano, hoje=None):
-  hoje = hoje or date.today()
-  data = parse_data_br(plano.proxima_execucao)
-  if data is not None and data < hoje:
-    return "Atrasado"
-  return "Agendado"
+    hoje = hoje or date.today()
+    data = parse_data_br(plano.proxima_execucao)
+    if data is not None and data < hoje:
+        return "Atrasado"
+    return "Agendado"
 
 
 def chave_mes_os(ordem):
-  for campo in (ordem.finalizacao, ordem.abertura):
-    try:
-      return datetime.strptime(campo, FORMATO_DATA).strftime("%Y-%m")
-    except (ValueError, TypeError):
-      continue
-  return None
+    for campo in (ordem.finalizacao, ordem.abertura):
+        try:
+            return datetime.strptime(campo, FORMATO_DATA).strftime("%Y-%m")
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def renderizar(template, **contexto):
-  js = "window.__CSRF__=" + json.dumps(token_csrf()) + ";" + JS_BASE
-  return render_template_string(
-      template,
-      css=CSS_BASE,
-      js=js,
-      favicon=FAVICON_J,
-      pwa_head=PWA_HEAD,
-      flash_msgs=get_flashed_messages(),
-      **contexto,
-  )
+    js = "window.__CSRF__=" + json.dumps(token_csrf()) + ";" + JS_BASE
+    return render_template_string(
+        template,
+        css=CSS_BASE,
+        js=js,
+        favicon=FAVICON_J,
+        pwa_head=PWA_HEAD,
+        flash_msgs=get_flashed_messages(),
+        **contexto,
+    )
 
 
 def gerar_excel(df, nome_planilha, prefixo, coluna_status=None):
-  memoria = BytesIO()
-  with pd.ExcelWriter(memoria, engine="openpyxl") as writer:
-    df.to_excel(writer, index=False, sheet_name=nome_planilha)
-    ws = writer.sheets[nome_planilha]
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
+    memoria = BytesIO()
+    with pd.ExcelWriter(memoria, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=nome_planilha)
+        ws = writer.sheets[nome_planilha]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
 
-    header_fill = PatternFill(
-        start_color="1F2937", end_color="1F2937", fill_type="solid"
-    )
-    accent_border = Side(border_style="medium", color="F97316")
-    thin_border_side = Side(border_style="thin", color="D1D5DB")
-    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    cell_font = Font(name="Calibri", size=10, color="111827")
-    zebra_fill = PatternFill(
-        start_color="F9FAFB", end_color="F9FAFB", fill_type="solid"
-    )
-    alert_fill = PatternFill(
-        start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"
-    )
-    alert_font = Font(name="Calibri", size=10, bold=True, color="991B1B")
-    ok_fill = PatternFill(
-        start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"
-    )
-    ok_font = Font(name="Calibri", size=10, bold=True, color="166534")
-
-    ws.row_dimensions[1].height = 26
-    for cell in ws[1]:
-      cell.fill = header_fill
-      cell.font = header_font
-      cell.alignment = Alignment(
-          horizontal="left", vertical="center", wrap_text=True
-      )
-      cell.border = Border(
-          bottom=accent_border, left=thin_border_side, right=thin_border_side
-      )
-
-    status_col_idx = None
-    if coluna_status and coluna_status in df.columns:
-      status_col_idx = list(df.columns).index(coluna_status) + 1
-
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
-      ws.row_dimensions[row_idx].height = 20
-      is_even = row_idx % 2 == 0
-      for col_idx, cell in enumerate(row, start=1):
-        cell.font = cell_font
-        cell.alignment = Alignment(vertical="center", wrap_text=False)
-        cell.border = Border(
-            bottom=thin_border_side, left=thin_border_side, right=thin_border_side
+        header_fill = PatternFill(
+            start_color="1F2937", end_color="1F2937", fill_type="solid"
         )
-        if is_even:
-          cell.fill = zebra_fill
-        if status_col_idx and col_idx == status_col_idx:
-          val_str = str(cell.value or "").lower()
-          if any(
-              k in val_str
-              for k in (
-                  "baixo",
-                  "atrasado",
-                  "emergencial",
-                  "reprovado",
-                  "crítica",
-                  "aguardando",
-              )
-          ):
-            cell.fill = alert_fill
-            cell.font = alert_font
-          elif any(
-              k in val_str
-              for k in ("normal", "finalizada", "aprovado", "comprado")
-          ):
-            cell.fill = ok_fill
-            cell.font = ok_font
+        accent_border = Side(border_style="medium", color="F97316")
+        thin_border_side = Side(border_style="thin", color="D1D5DB")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        cell_font = Font(name="Calibri", size=10, color="111827")
+        zebra_fill = PatternFill(
+            start_color="F9FAFB", end_color="F9FAFB", fill_type="solid"
+        )
+        alert_fill = PatternFill(
+            start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"
+        )
+        alert_font = Font(name="Calibri", size=10, bold=True, color="991B1B")
+        ok_fill = PatternFill(
+            start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"
+        )
+        ok_font = Font(name="Calibri", size=10, bold=True, color="166534")
 
-    for coluna in ws.columns:
-      letra = coluna[0].column_letter
-      maior = max([len(str(c.value or "")) for c in coluna] or [0])
-      ws.column_dimensions[letra].width = min(max(maior + 4, 14), 45)
+        ws.row_dimensions[1].height = 26
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(
+                horizontal="left", vertical="center", wrap_text=True
+            )
+            cell.border = Border(
+                bottom=accent_border, left=thin_border_side, right=thin_border_side
+            )
 
-  memoria.seek(0)
-  nome = f"{prefixo}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
-  return send_file(
-      memoria,
-      as_attachment=True,
-      download_name=nome,
-      mimetype=(
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      ),
-  )
+        status_col_idx = None
+        if coluna_status and coluna_status in df.columns:
+            status_col_idx = list(df.columns).index(coluna_status) + 1
+
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+            ws.row_dimensions[row_idx].height = 20
+            is_even = row_idx % 2 == 0
+            for col_idx, cell in enumerate(row, start=1):
+                cell.font = cell_font
+                cell.alignment = Alignment(vertical="center", wrap_text=False)
+                cell.border = Border(
+                    bottom=thin_border_side, left=thin_border_side, right=thin_border_side
+                )
+                if is_even:
+                    cell.fill = zebra_fill
+                if status_col_idx and col_idx == status_col_idx:
+                    val_str = str(cell.value or "").lower()
+                    if any(
+                        k in val_str
+                        for k in (
+                            "baixo",
+                            "atrasado",
+                            "emergencial",
+                            "reprovado",
+                            "crítica",
+                            "aguardando",
+                        )
+                    ):
+                        cell.fill = alert_fill
+                        cell.font = alert_font
+                    elif any(
+                        k in val_str
+                        for k in ("normal", "finalizada", "aprovado", "comprado")
+                    ):
+                        cell.fill = ok_fill
+                        cell.font = ok_font
+
+        for coluna in ws.columns:
+            letra = coluna[0].column_letter
+            maior = max([len(str(c.value or "")) for c in coluna] or [0])
+            ws.column_dimensions[letra].width = min(max(maior + 4, 14), 45)
+
+    memoria.seek(0)
+    nome = f"{prefixo}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    return send_file(
+        memoria,
+        as_attachment=True,
+        download_name=nome,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+    )
 
 
 # ==============================================================================
@@ -1116,7 +1122,7 @@ tr.sem-resultado { display: none; }
 .aguardando-peca { background: rgba(168, 85, 247, 0.18); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.38); }
 .finalizada, .estoque-ok { background: rgba(34, 197, 94, 0.14); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.32); }
 .estoque-baixo { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
-.vencido { color: #f87171; }
+.v vencido { color: #f87171; }
 
 .prioridade { font-weight: 700; }
 .prioridade-critica { color: #f87171; }
@@ -2646,71 +2652,71 @@ document.querySelectorAll('.qr-box').forEach(el => {
 # DECORATOR DE AUTENTICAÇÃO CENTRALIZADA
 # ==============================================================================
 def requer_login(f):
-  from functools import wraps
+    from functools import wraps
 
-  @wraps(f)
-  def decorated_function(*args, **kwargs):
-    if not session.get("logado_sistema"):
-      return redirect(url_for("login_sistema"))
-    return f(*args, **kwargs)
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("logado_sistema"):
+            return redirect(url_for("login_sistema"))
+        return f(*args, **kwargs)
 
-  return decorated_function
+    return decorated_function
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login_sistema():
-  if request.method == "POST":
-    ip = request.remote_addr or "?"
-    agora = time.time()
-    falhas, desde = tentativas_login.get(ip, (0, agora))
-    if agora - desde >= BLOQUEIO_LOGIN_SEG:
-      falhas, desde = 0, agora
-    if falhas >= MAX_TENTATIVAS_LOGIN:
-      flash("Muitas tentativas incorretas. Aguarde alguns minutos.")
-      return renderizar(HTML_LOGIN_SISTEMA)
-    usuario = request.form.get("usuario", "").strip()
-    senha = request.form.get("senha", "").strip()
-    ok_u = hmac.compare_digest(usuario.encode(), SISTEMA_USUARIO.encode())
-    ok_s = hmac.compare_digest(senha.encode(), SISTEMA_SENHA.encode())
-    if ok_u and ok_s:
-      tentativas_login.pop(ip, None)
-      session["logado_sistema"] = True
-      session.permanent = True
-      registrar_auditoria("Governança", "Login", f"Acesso à Central por IP {ip}")
-      flash("Login realizado com sucesso!")
-      return redirect(url_for("central_gestao"))
-    tentativas_login[ip] = (falhas + 1, desde)
-    flash("Usuário ou senha incorretos.")
-  return renderizar(HTML_LOGIN_SISTEMA)
+    if request.method == "POST":
+        ip = request.remote_addr or "?"
+        agora = time.time()
+        falhas, desde = tentativas_login.get(ip, (0, agora))
+        if agora - desde >= BLOQUEIO_LOGIN_SEG:
+            falhas, desde = 0, agora
+        if falhas >= MAX_TENTATIVAS_LOGIN:
+            flash("Muitas tentativas incorretas. Aguarde alguns minutos.")
+            return renderizar(HTML_LOGIN_SISTEMA)
+        usuario = request.form.get("usuario", "").strip()
+        senha = request.form.get("senha", "").strip()
+        ok_u = hmac.compare_digest(usuario.encode(), SISTEMA_USUARIO.encode())
+        ok_s = hmac.compare_digest(senha.encode(), SISTEMA_SENHA.encode())
+        if ok_u and ok_s:
+            tentativas_login.pop(ip, None)
+            session["logado_sistema"] = True
+            session.permanent = True
+            registrar_auditoria("Governança", "Login", f"Acesso à Central por IP {ip}")
+            flash("Login realizado com sucesso!")
+            return redirect(url_for("central_gestao"))
+        tentativas_login[ip] = (falhas + 1, desde)
+        flash("Usuário ou senha incorretos.")
+    return renderizar(HTML_LOGIN_SISTEMA)
 
 
 @app.route("/logout")
 def logout_sistema():
-  session.pop("logado_sistema", None)
-  flash("Sessão encerrada com sucesso.")
-  return redirect(url_for("dashboard"))
+    session.pop("logado_sistema", None)
+    flash("Sessão encerrada com sucesso.")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/health")
 def healthcheck():
-  return jsonify({"status": "ok", "timestamp": agora_formatado()}), 200
+    return jsonify({"status": "ok", "timestamp": agora_formatado()}), 200
 
 
 @app.route("/governanca/backup")
 @requer_login
 def baixar_backup_db():
-  if "sqlite" not in app_db_uri or not os.path.exists(DB_PATH):
-    flash(
-        "Backup local via arquivo não aplicável (utilizando banco externo na"
-        " nuvem)."
+    if "sqlite" not in app_db_uri or not os.path.exists(DB_PATH):
+        flash(
+            "Backup local via arquivo não aplicável (utilizando banco externo na"
+            " nuvem)."
+        )
+        return redirect(url_for("central_gestao"))
+    db.session.commit()
+    registrar_auditoria(
+        "Governança", "Download Backup", "Cópia completa os.db exportada."
     )
-    return redirect(url_for("central_gestao"))
-  db.session.commit()
-  registrar_auditoria(
-      "Governança", "Download Backup", "Cópia completa os.db exportada."
-  )
-  nome = f"backup_manutencao_jamaica_{datetime.now():%Y%m%d_%H%M%S}.db"
-  return send_file(DB_PATH, as_attachment=True, download_name=nome)
+    nome = f"backup_manutencao_jamaica_{datetime.now():%Y%m%d_%H%M%S}.db"
+    return send_file(DB_PATH, as_attachment=True, download_name=nome)
 
 
 # ==============================================================================
@@ -2718,275 +2724,275 @@ def baixar_backup_db():
 # ==============================================================================
 @app.route("/")
 def dashboard():
-  busca = request.args.get("busca", "").strip()
-  prefill_setor = request.args.get("abrir_maquina", "").strip()
-  consulta = OrdemServico.query
-  if busca:
-    termo = f"%{busca}%"
-    consulta = consulta.filter(
-        db.or_(
-            OrdemServico.numero_os.ilike(termo),
-            OrdemServico.solicitante.ilike(termo),
-            OrdemServico.setor.ilike(termo),
-            OrdemServico.titulo.ilike(termo),
-            OrdemServico.descricao.ilike(termo),
-            OrdemServico.responsavel.ilike(termo),
+    busca = request.args.get("busca", "").strip()
+    prefill_setor = request.args.get("abrir_maquina", "").strip()
+    consulta = OrdemServico.query
+    if busca:
+        termo = f"%{busca}%"
+        consulta = consulta.filter(
+            db.or_(
+                OrdemServico.numero_os.ilike(termo),
+                OrdemServico.solicitante.ilike(termo),
+                OrdemServico.setor.ilike(termo),
+                OrdemServico.titulo.ilike(termo),
+                OrdemServico.descricao.ilike(termo),
+                OrdemServico.responsavel.ilike(termo),
+            )
         )
+    ordens = consulta.order_by(OrdemServico.id.desc()).all()
+    abertas = OrdemServico.query.filter_by(status="Aberta").count()
+    aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
+    finalizadas = OrdemServico.query.filter_by(status="Finalizada").count()
+    total = OrdemServico.query.count()
+    pecas_estoque = (
+        ItemEstoque.query.filter(ItemEstoque.quantidade > 0)
+        .order_by(ItemEstoque.nome.asc())
+        .all()
     )
-  ordens = consulta.order_by(OrdemServico.id.desc()).all()
-  abertas = OrdemServico.query.filter_by(status="Aberta").count()
-  aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
-  finalizadas = OrdemServico.query.filter_by(status="Finalizada").count()
-  total = OrdemServico.query.count()
-  pecas_estoque = (
-      ItemEstoque.query.filter(ItemEstoque.quantidade > 0)
-      .order_by(ItemEstoque.nome.asc())
-      .all()
-  )
-  maquinas_sugeridas = [
-      m.maquina for m in MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
-  ]
+    maquinas_sugeridas = [
+        m.maquina for m in MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
+    ]
 
-  return renderizar(
-      HTML_OS,
-      ordens=ordens,
-      abertas=abertas,
-      aguardando=aguardando,
-      finalizadas=finalizadas,
-      total=total,
-      pct_final=round(finalizadas / total * 100) if total else 0,
-      proxima=gerar_numero_os(),
-      busca=busca,
-      prefill_setor=prefill_setor,
-      maquinas_sugeridas=maquinas_sugeridas,
-      duplas=DUPLAS,
-      pecas_estoque=pecas_estoque,
-      fmt_hhmm=horas_decimais_para_hhmm,
-  )
+    return renderizar(
+        HTML_OS,
+        ordens=ordens,
+        abertas=abertas,
+        aguardando=aguardando,
+        finalizadas=finalizadas,
+        total=total,
+        pct_final=round(finalizadas / total * 100) if total else 0,
+        proxima=gerar_numero_os(),
+        busca=busca,
+        prefill_setor=prefill_setor,
+        maquinas_sugeridas=maquinas_sugeridas,
+        duplas=DUPLAS,
+        pecas_estoque=pecas_estoque,
+        fmt_hhmm=horas_decimais_para_hhmm,
+    )
 
 
 @app.route("/criar", methods=["POST"])
 def criar():
-  solicitante = request.form.get("solicitante", "").strip()
-  if not solicitante:
-    flash("Informe o nome do solicitante.")
+    solicitante = request.form.get("solicitante", "").strip()
+    if not solicitante:
+        flash("Informe o nome do solicitante.")
+        return redirect(url_for("dashboard"))
+    prioridade = request.form.get("prioridade", "Média")
+    if prioridade not in PRIORIDADES_VALIDAS:
+        prioridade = "Média"
+    try:
+        with os_lock:
+            nova = OrdemServico(
+                numero_os=gerar_numero_os(),
+                solicitante=solicitante,
+                setor=request.form.get("setor", "").strip(),
+                titulo=request.form.get("titulo", "").strip(),
+                descricao=request.form.get("descricao", "").strip(),
+                prioridade=prioridade,
+                responsavel=request.form.get("responsavel", "").strip(),
+                abertura=agora_formatado(),
+                finalizacao="",
+                status="Aberta",
+                tempo_total="",
+                tipo_manutencao="",
+                funcionarios="",
+                horas_trabalhadas=0.0,
+                observacao_tecnica="",
+                motivo_pausa="",
+            )
+            db.session.add(nova)
+            db.session.commit()
+            registrar_auditoria(
+                "Ordens de Serviço",
+                "Criação O.S.",
+                f"O.S. {nova.numero_os} criada para {nova.setor or 'Geral'}",
+            )
+        flash(f"O.S. {nova.numero_os} registrada com sucesso!")
+    except Exception:
+        db.session.rollback()
+        flash("Não foi possível criar a O.S.")
     return redirect(url_for("dashboard"))
-  prioridade = request.form.get("prioridade", "Média")
-  if prioridade not in PRIORIDADES_VALIDAS:
-    prioridade = "Média"
-  try:
-    with os_lock:
-      nova = OrdemServico(
-          numero_os=gerar_numero_os(),
-          solicitante=solicitante,
-          setor=request.form.get("setor", "").strip(),
-          titulo=request.form.get("titulo", "").strip(),
-          descricao=request.form.get("descricao", "").strip(),
-          prioridade=prioridade,
-          responsavel=request.form.get("responsavel", "").strip(),
-          abertura=agora_formatado(),
-          finalizacao="",
-          status="Aberta",
-          tempo_total="",
-          tipo_manutencao="",
-          funcionarios="",
-          horas_trabalhadas=0.0,
-          observacao_tecnica="",
-          motivo_pausa="",
-      )
-      db.session.add(nova)
-      db.session.commit()
-      registrar_auditoria(
-          "Ordens de Serviço",
-          "Criação O.S.",
-          f"O.S. {nova.numero_os} criada para {nova.setor or 'Geral'}",
-      )
-    flash(f"O.S. {nova.numero_os} registrada com sucesso!")
-  except Exception:
-    db.session.rollback()
-    flash("Não foi possível criar a O.S.")
-  return redirect(url_for("dashboard"))
 
 
 @app.route("/pausar/<int:id>", methods=["POST"])
 def pausar_os(id):
-  ordem = db.session.get(OrdemServico, id)
-  if not ordem or ordem.status == "Finalizada":
-    flash("Ordem de Serviço inválida.")
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem or ordem.status == "Finalizada":
+        flash("Ordem de Serviço inválida.")
+        return redirect(url_for("dashboard"))
+    novo_status = request.form.get("novo_status", "Aguardando Peça").strip()
+    motivo = request.form.get("motivo_pausa", "").strip()
+    try:
+        ordem.status = novo_status
+        ordem.motivo_pausa = motivo if novo_status == "Aguardando Peça" else ""
+        db.session.commit()
+        registrar_auditoria(
+            "Ordens de Serviço",
+            "Atualização Status",
+            f"O.S. {ordem.numero_os} alterada para {novo_status}",
+        )
+        flash(f"O.S. {ordem.numero_os} atualizada.")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao atualizar status.")
     return redirect(url_for("dashboard"))
-  novo_status = request.form.get("novo_status", "Aguardando Peça").strip()
-  motivo = request.form.get("motivo_pausa", "").strip()
-  try:
-    ordem.status = novo_status
-    ordem.motivo_pausa = motivo if novo_status == "Aguardando Peça" else ""
-    db.session.commit()
-    registrar_auditoria(
-        "Ordens de Serviço",
-        "Atualização Status",
-        f"O.S. {ordem.numero_os} alterada para {novo_status}",
-    )
-    flash(f"O.S. {ordem.numero_os} atualizada.")
-  except Exception:
-    db.session.rollback()
-    flash("Erro ao atualizar status.")
-  return redirect(url_for("dashboard"))
 
 
 @app.route("/imprimir-os/<int:id>")
 def imprimir_os(id):
-  ordem = db.session.get(OrdemServico, id)
-  if not ordem:
-    flash("O.S. não encontrada.")
-    return redirect(url_for("dashboard"))
-  return render_template_string(
-      HTML_IMPRESSAO_OS, os=ordem, fmt_hhmm=horas_decimais_para_hhmm
-  )
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem:
+        flash("O.S. não encontrada.")
+        return redirect(url_for("dashboard"))
+    return render_template_string(
+        HTML_IMPRESSAO_OS, os=ordem, fmt_hhmm=horas_decimais_para_hhmm
+    )
 
 
 @app.route("/finalizar/<int:id>", methods=["POST"])
 def finalizar(id):
-  ordem = db.session.get(OrdemServico, id)
-  if not ordem or ordem.status == "Finalizada":
-    flash("O.S. inválida ou já finalizada.")
-    return redirect(url_for("dashboard"))
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem or ordem.status == "Finalizada":
+        flash("O.S. inválida ou já finalizada.")
+        return redirect(url_for("dashboard"))
 
-  tipo_manutencao = request.form.get("tipo_manutencao", "Preventiva")
-  funcs_selecionados = [
-      f for f in request.form.getlist("funcionarios") if f in FUNCIONARIOS_VALIDOS
-  ]
-  tempo_str = request.form.get("tempo_trabalhado", "01:00").strip()
-  obs_tecnica = request.form.get("observacao_tecnica", "").strip()
-  horas_decimais = tempo_hhmm_para_horas_decimais(tempo_str)
+    tipo_manutencao = request.form.get("tipo_manutencao", "Preventiva")
+    funcs_selecionados = [
+        f for f in request.form.getlist("funcionarios") if f in FUNCIONARIOS_VALIDOS
+    ]
+    tempo_str = request.form.get("tempo_trabalhado", "01:00").strip()
+    obs_tecnica = request.form.get("observacao_tecnica", "").strip()
+    horas_decimais = tempo_hhmm_para_horas_decimais(tempo_str)
 
-  if not funcs_selecionados:
-    flash("Selecione pelo menos um executante.")
-    return redirect(url_for("dashboard"))
-  if horas_decimais <= 0:
-    flash("Informe o tempo trabalhado.")
-    return redirect(url_for("dashboard"))
+    if not funcs_selecionados:
+        flash("Selecione pelo menos um executante.")
+        return redirect(url_for("dashboard"))
+    if horas_decimais <= 0:
+        flash("Informe o tempo trabalhado.")
+        return redirect(url_for("dashboard"))
 
-  peca_id_str = request.form.get("peca_id", "").strip()
-  try:
-    peca_qtd = max(1, int(request.form.get("peca_qtd", 1)))
-  except ValueError:
-    peca_qtd = 1
+    peca_id_str = request.form.get("peca_id", "").strip()
+    try:
+        peca_qtd = max(1, int(request.form.get("peca_qtd", 1)))
+    except ValueError:
+        peca_qtd = 1
 
-  try:
-    with estoque_lock:
-      if peca_id_str.isdigit():
-        peca = db.session.get(ItemEstoque, int(peca_id_str))
-        if peca:
-          if peca.quantidade < peca_qtd:
-            flash(
-                f"Saldo insuficiente de '{peca.nome}' (Disponível:"
-                f" {peca.quantidade})."
+    try:
+        with estoque_lock:
+            if peca_id_str.isdigit():
+                peca = db.session.get(ItemEstoque, int(peca_id_str))
+                if peca:
+                    if peca.quantidade < peca_qtd:
+                        flash(
+                            f"Saldo insuficiente de '{peca.nome}' (Disponível:"
+                            f" {peca.quantidade})."
+                        )
+                        return redirect(url_for("dashboard"))
+                    peca.quantidade -= peca_qtd
+                    peca.ultima_atualizacao = agora_formatado()
+                    db.session.add(
+                        HistoricoMovimentacao(
+                            peca_codigo=peca.codigo,
+                            peca_nome=peca.nome,
+                            tipo="Retirada",
+                            quantidade=peca_qtd,
+                            solicitante=(
+                                f"O.S. {ordem.numero_os} ({', '.join(funcs_selecionados)})"
+                            ),
+                            data_hora=agora_formatado(),
+                        )
+                    )
+                    obs_tecnica = (
+                        f"{obs_tecnica}\n[Material utilizado: {peca_qtd}x {peca.nome}"
+                        f" ({peca.codigo})]"
+                    ).strip()
+
+            ordem.finalizacao = agora_formatado()
+            ordem.status = "Finalizada"
+            ordem.motivo_pausa = ""
+            ordem.tipo_manutencao = tipo_manutencao
+            ordem.funcionarios = ", ".join(funcs_selecionados)
+            ordem.horas_trabalhadas = horas_decimais
+            ordem.observacao_tecnica = obs_tecnica
+            ordem.tempo_total = calcular_tempo_total(ordem.abertura, ordem.finalizacao)
+            db.session.commit()
+            registrar_auditoria(
+                "Ordens de Serviço",
+                "Finalização O.S.",
+                f"O.S. {ordem.numero_os} finalizada por {ordem.funcionarios}",
             )
-            return redirect(url_for("dashboard"))
-          peca.quantidade -= peca_qtd
-          peca.ultima_atualizacao = agora_formatado()
-          db.session.add(
-              HistoricoMovimentacao(
-                  peca_codigo=peca.codigo,
-                  peca_nome=peca.nome,
-                  tipo="Retirada",
-                  quantidade=peca_qtd,
-                  solicitante=(
-                      f"O.S. {ordem.numero_os} ({', '.join(funcs_selecionados)})"
-                  ),
-                  data_hora=agora_formatado(),
-              )
-          )
-          obs_tecnica = (
-              f"{obs_tecnica}\n[Material utilizado: {peca_qtd}x {peca.nome}"
-              f" ({peca.codigo})]"
-          ).strip()
-
-      ordem.finalizacao = agora_formatado()
-      ordem.status = "Finalizada"
-      ordem.motivo_pausa = ""
-      ordem.tipo_manutencao = tipo_manutencao
-      ordem.funcionarios = ", ".join(funcs_selecionados)
-      ordem.horas_trabalhadas = horas_decimais
-      ordem.observacao_tecnica = obs_tecnica
-      ordem.tempo_total = calcular_tempo_total(ordem.abertura, ordem.finalizacao)
-      db.session.commit()
-      registrar_auditoria(
-          "Ordens de Serviço",
-          "Finalização O.S.",
-          f"O.S. {ordem.numero_os} finalizada por {ordem.funcionarios}",
-      )
-    flash(f"O.S. {ordem.numero_os} finalizada com sucesso!")
-  except Exception:
-    db.session.rollback()
-    flash("Erro ao finalizar O.S.")
-  return redirect(url_for("dashboard"))
+        flash(f"O.S. {ordem.numero_os} finalizada com sucesso!")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao finalizar O.S.")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/excluir/<int:id>", methods=["POST"])
 def excluir(id):
-  ordem = db.session.get(OrdemServico, id)
-  if ordem:
-    num = ordem.numero_os
-    db.session.delete(ordem)
-    db.session.commit()
-    registrar_auditoria(
-        "Ordens de Serviço", "Exclusão O.S.", f"O.S. {num} excluída permanentemente"
-    )
-    flash("O.S. excluída com sucesso!")
-  return redirect(url_for("dashboard"))
+    ordem = db.session.get(OrdemServico, id)
+    if ordem:
+        num = ordem.numero_os
+        db.session.delete(ordem)
+        db.session.commit()
+        registrar_auditoria(
+            "Ordens de Serviço", "Exclusão O.S.", f"O.S. {num} excluída permanentemente"
+        )
+        flash("O.S. excluída com sucesso!")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/excel")
 def excel():
-  ordens = OrdemServico.query.order_by(OrdemServico.id.asc()).all()
-  colunas = [
-      "OS",
-      "Solicitante",
-      "Máquina / Setor",
-      "Causa",
-      "Descrição",
-      "Laudo Técnico",
-      "Prioridade",
-      "Responsável",
-      "Tipo Manutenção",
-      "Funcionários",
-      "Horas Trabalhadas",
-      "Status",
-      "Abertura",
-      "Finalização",
-      "Lead Time Total",
-  ]
-  dados = [
-      {
-          "OS": o.numero_os,
-          "Solicitante": o.solicitante,
-          "Máquina / Setor": o.setor or "",
-          "Causa": o.titulo or "",
-          "Descrição": o.descricao or "",
-          "Laudo Técnico": o.observacao_tecnica or "",
-          "Prioridade": o.prioridade,
-          "Responsável": o.responsavel or "",
-          "Tipo Manutenção": o.tipo_manutencao or "",
-          "Funcionários": o.funcionarios or "",
-          "Horas Trabalhadas": horas_decimais_para_hhmm(
-              o.horas_trabalhadas or 0
-          ),
-          "Status": o.status,
-          "Abertura": o.abertura,
-          "Finalização": o.finalizacao or "",
-          "Lead Time Total": o.tempo_total or "",
-      }
-      for o in ordens
-  ]
-  registrar_auditoria(
-      "Relatórios", "Exportação Excel O.S.", "Planilha de Ordens de Serviço gerada."
-  )
-  return gerar_excel(
-      pd.DataFrame(dados, columns=colunas),
-      "Ordens de Serviço",
-      "ordens_servico",
-      coluna_status="Status",
-  )
+    ordens = OrdemServico.query.order_by(OrdemServico.id.asc()).all()
+    colunas = [
+        "OS",
+        "Solicitante",
+        "Máquina / Setor",
+        "Causa",
+        "Descrição",
+        "Laudo Técnico",
+        "Prioridade",
+        "Responsável",
+        "Tipo Manutenção",
+        "Funcionários",
+        "Horas Trabalhadas",
+        "Status",
+        "Abertura",
+        "Finalização",
+        "Lead Time Total",
+    ]
+    dados = [
+        {
+            "OS": o.numero_os,
+            "Solicitante": o.solicitante,
+            "Máquina / Setor": o.setor or "",
+            "Causa": o.titulo or "",
+            "Descrição": o.descricao or "",
+            "Laudo Técnico": o.observacao_tecnica or "",
+            "Prioridade": o.prioridade,
+            "Responsável": o.responsavel or "",
+            "Tipo Manutenção": o.tipo_manutencao or "",
+            "Funcionários": o.funcionarios or "",
+            "Horas Trabalhadas": horas_decimais_para_hhmm(
+                o.horas_trabalhadas or 0
+            ),
+            "Status": o.status,
+            "Abertura": o.abertura,
+            "Finalização": o.finalizacao or "",
+            "Lead Time Total": o.tempo_total or "",
+        }
+        for o in ordens
+    ]
+    registrar_auditoria(
+        "Relatórios", "Exportação Excel O.S.", "Planilha de Ordens de Serviço gerada."
+    )
+    return gerar_excel(
+        pd.DataFrame(dados, columns=colunas),
+        "Ordens de Serviço",
+        "ordens_servico",
+        coluna_status="Status",
+    )
 
 
 # ==============================================================================
@@ -2995,793 +3001,793 @@ def excel():
 @app.route("/gestao")
 @requer_login
 def central_gestao():
-  pecas = ItemEstoque.query.order_by(ItemEstoque.id.desc()).all()
-  movimentacoes = (
-      HistoricoMovimentacao.query.order_by(HistoricoMovimentacao.id.desc())
-      .limit(50)
-      .all()
-  )
-  total_pecas = ItemEstoque.query.count()
-  total_quantidade = (
-      db.session.query(db.func.sum(ItemEstoque.quantidade)).scalar() or 0
-  )
-  itens_baixo = ItemEstoque.query.filter(
-      ItemEstoque.quantidade <= ItemEstoque.estoque_minimo
-  ).count()
-
-  maquinas = MaquinaSpare.query.order_by(MaquinaSpare.id.desc()).all()
-  mapa_estoque = {
-      item.codigo.upper(): item.quantidade for item in ItemEstoque.query.all()
-  }
-
-  hoje = date.today()
-  planos = PlanoPreventivo.query.all()
-  planos.sort(key=lambda p: parse_data_br(p.proxima_execucao) or date.max)
-  for p in planos:
-    p.status_calc = status_plano(p, hoje)
-  atrasados = sum(
-      1
-      for p in planos
-      if parse_data_br(p.proxima_execucao)
-      and parse_data_br(p.proxima_execucao) < hoje
-  )
-  proximos = sum(
-      1
-      for p in planos
-      if parse_data_br(p.proxima_execucao)
-      and hoje <= parse_data_br(p.proxima_execucao) <= hoje + timedelta(days=7)
-  )
-
-  repor_codigo = request.args.get("repor_codigo", "").strip()
-  repor_nome = request.args.get("repor_nome", "").strip()
-  repor_qtd = request.args.get("repor_qtd", "1").strip()
-  repor_item = (
-      {"codigo": repor_codigo, "nome": repor_nome, "qtd": repor_qtd}
-      if repor_codigo
-      else None
-  )
-
-  compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.desc()).all()
-  total_sc = SolicitacaoCompra.query.count()
-  emergenciais = SolicitacaoCompra.query.filter_by(
-      tipo_sc="S.C. Emergencial"
-  ).count()
-  programadas = SolicitacaoCompra.query.filter_by(
-      tipo_sc="S.C. Programada"
-  ).count()
-  reposicao = SolicitacaoCompra.query.filter_by(
-      tipo_sc="S.C. Reposição / Estoque"
-  ).count()
-
-  ordens_fin = OrdemServico.query.filter_by(status="Finalizada").all()
-  meses_dict = {}
-  maquinas_stats = {}
-  total_preventiva = 0
-  total_corretiva = 0
-  horas_corretivas = 0.0
-  datas_corretivas = []
-
-  for o in ordens_fin:
-    tipo = o.tipo_manutencao or "Preventiva"
-    horas_os = o.horas_trabalhadas or 0.0
-    if tipo == "Preventiva":
-      total_preventiva += 1
-    else:
-      total_corretiva += 1
-      horas_corretivas += horas_os
-      try:
-        datas_corretivas.append(datetime.strptime(o.abertura, FORMATO_DATA))
-      except (ValueError, TypeError):
-        pass
-    nome_maq = (o.setor or "").strip()
-    if nome_maq:
-      if nome_maq not in maquinas_stats:
-        maquinas_stats[nome_maq] = {
-            "nome": nome_maq,
-            "qtd": 0,
-            "corretivas": 0,
-            "horas": 0.0,
-        }
-      maquinas_stats[nome_maq]["qtd"] += 1
-      maquinas_stats[nome_maq]["horas"] += horas_os
-      if tipo == "Corretiva":
-        maquinas_stats[nome_maq]["corretivas"] += 1
-
-    chave_mes = chave_mes_os(o) or datetime.now().strftime("%Y-%m")
-    if chave_mes not in meses_dict:
-      ano, mes_num = chave_mes.split("-")
-      meses_dict[chave_mes] = {
-          "chave": chave_mes,
-          "mes_nome": f"{MESES_PT.get(mes_num, mes_num)} de {ano}",
-          "Preventiva": 0,
-          "Corretiva": 0,
-      }
-    if tipo == "Preventiva":
-      meses_dict[chave_mes]["Preventiva"] += 1
-    else:
-      meses_dict[chave_mes]["Corretiva"] += 1
-
-  mttr_horas = (
-      (horas_corretivas / total_corretiva) if total_corretiva > 0 else 0.0
-  )
-  mttr_str = horas_decimais_para_hhmm(mttr_horas) if total_corretiva > 0 else "N/D"
-
-  datas_corretivas.sort()
-  if len(datas_corretivas) >= 2:
-    intervalo_total_h = (
-        datas_corretivas[-1] - datas_corretivas[0]
-    ).total_seconds() / 3600.0
-    mtbf_horas = max(
-        0.0, (intervalo_total_h - horas_corretivas) / (len(datas_corretivas) - 1)
+    pecas = ItemEstoque.query.order_by(ItemEstoque.id.desc()).all()
+    movimentacoes = (
+        HistoricoMovimentacao.query.order_by(HistoricoMovimentacao.id.desc())
+        .limit(50)
+        .all()
     )
-    mtbf_str = (
-        f"{round(mtbf_horas / 24, 1)} dias"
-        if mtbf_horas >= 24
-        else horas_decimais_para_hhmm(mtbf_horas)
+    total_pecas = ItemEstoque.query.count()
+    total_quantidade = (
+        db.session.query(db.func.sum(ItemEstoque.quantidade)).scalar() or 0
     )
-  else:
-    mtbf_str = "N/D"
+    itens_baixo = ItemEstoque.query.filter(
+        ItemEstoque.quantidade <= ItemEstoque.estoque_minimo
+    ).count()
 
-  ranking_maquinas = sorted(
-      maquinas_stats.values(), key=lambda x: x["horas"], reverse=True
-  )[:5]
-  for r in ranking_maquinas:
-    r["horas_str"] = horas_decimais_para_hhmm(r["horas"])
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.id.desc()).all()
+    mapa_estoque = {
+        item.codigo.upper(): item.quantidade for item in ItemEstoque.query.all()
+    }
 
-  meses_ordenados = sorted(meses_dict.values(), key=lambda x: x["chave"])
-  dados_tabela = []
-  for m in meses_ordenados:
-    prev, corr = m["Preventiva"], m["Corretiva"]
-    tot = prev + corr
-    dados_tabela.append({
-        "chave": m["chave"],
-        "mes_nome": m["mes_nome"],
-        "total": tot,
-        "prev_qtd": prev,
-        "prev_pct": round(prev / tot * 100, 1) if tot else 0,
-        "corr_qtd": corr,
-        "corr_pct": round(corr / tot * 100, 1) if tot else 0,
-    })
+    hoje = date.today()
+    planos = PlanoPreventivo.query.all()
+    planos.sort(key=lambda p: parse_data_br(p.proxima_execucao) or date.max)
+    for p in planos:
+        p.status_calc = status_plano(p, hoje)
+    atrasados = sum(
+        1
+        for p in planos
+        if parse_data_br(p.proxima_execucao)
+        and parse_data_br(p.proxima_execucao) < hoje
+    )
+    proximos = sum(
+        1
+        for p in planos
+        if parse_data_br(p.proxima_execucao)
+        and hoje <= parse_data_br(p.proxima_execucao) <= hoje + timedelta(days=7)
+    )
 
-  total_fin = total_preventiva + total_corretiva
+    repor_codigo = request.args.get("repor_codigo", "").strip()
+    repor_nome = request.args.get("repor_nome", "").strip()
+    repor_qtd = request.args.get("repor_qtd", "1").strip()
+    repor_item = (
+        {"codigo": repor_codigo, "nome": repor_nome, "qtd": repor_qtd}
+        if repor_codigo
+        else None
+    )
 
-  chaves_eq = sorted({c for c in (chave_mes_os(o) for o in ordens_fin) if c})
-  meses_eq = [
-      {
-          "chave": c,
-          "nome": (
-              f"{MESES_PT.get(c.split('-')[1], c.split('-')[1])} de"
-              f" {c.split('-')[0]}"
-          ),
-      }
-      for c in chaves_eq
-  ]
-  mes_sel = request.args.get("mes", "").strip()
-  if not mes_sel:
-    atual = datetime.now().strftime("%Y-%m")
-    mes_sel = atual if atual in chaves_eq else "geral"
-  ordens_fin_eq = [
-      o for o in ordens_fin if mes_sel == "geral" or chave_mes_os(o) == mes_sel
-  ]
+    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.desc()).all()
+    total_sc = SolicitacaoCompra.query.count()
+    emergenciais = SolicitacaoCompra.query.filter_by(
+        tipo_sc="S.C. Emergencial"
+    ).count()
+    programadas = SolicitacaoCompra.query.filter_by(
+        tipo_sc="S.C. Programada"
+    ).count()
+    reposicao = SolicitacaoCompra.query.filter_by(
+        tipo_sc="S.C. Reposição / Estoque"
+    ).count()
 
-  duplas_calc = []
-  for d in DUPLAS:
-    membros = {d["mecanico"], d["eletricista"]}
-    horas, dias, qtd_os = 0.0, set(), 0
-    for o in ordens_fin_eq:
-      if {f.strip() for f in (o.funcionarios or "").split(",")} & membros:
-        horas += o.horas_trabalhadas or 0.0
-        qtd_os += 1
-        try:
-          dias.add(datetime.strptime(o.finalizacao, FORMATO_DATA).date())
-        except (ValueError, TypeError):
-          pass
-    cap = len(dias) * JORNADA_REFERENCIA
-    eficiencia = min(100.0, round(horas / cap * 100, 1)) if cap else 0.0
-    duplas_calc.append(
-        dict(
-            d,
-            horas=horas,
-            tempo_str=horas_decimais_para_hhmm(horas),
-            dias=len(dias),
-            qtd_os=qtd_os,
-            eficiencia=eficiencia,
-            eficiencia_clamp=int(eficiencia),
+    ordens_fin = OrdemServico.query.filter_by(status="Finalizada").all()
+    meses_dict = {}
+    maquinas_stats = {}
+    total_preventiva = 0
+    total_corretiva = 0
+    horas_corretivas = 0.0
+    datas_corretivas = []
+
+    for o in ordens_fin:
+        tipo = o.tipo_manutencao or "Preventiva"
+        horas_os = o.horas_trabalhadas or 0.0
+        if tipo == "Preventiva":
+            total_preventiva += 1
+        else:
+            total_corretiva += 1
+            horas_corretivas += horas_os
+            try:
+                datas_corretivas.append(datetime.strptime(o.abertura, FORMATO_DATA))
+            except (ValueError, TypeError):
+                pass
+        nome_maq = (o.setor or "").strip()
+        if nome_maq:
+            if nome_maq not in maquinas_stats:
+                maquinas_stats[nome_maq] = {
+                    "nome": nome_maq,
+                    "qtd": 0,
+                    "corretivas": 0,
+                    "horas": 0.0,
+                }
+            maquinas_stats[nome_maq]["qtd"] += 1
+            maquinas_stats[nome_maq]["horas"] += horas_os
+            if tipo == "Corretiva":
+                maquinas_stats[nome_maq]["corretivas"] += 1
+
+        chave_mes = chave_mes_os(o) or datetime.now().strftime("%Y-%m")
+        if chave_mes not in meses_dict:
+            ano, mes_num = chave_mes.split("-")
+            meses_dict[chave_mes] = {
+                "chave": chave_mes,
+                "mes_nome": f"{MESES_PT.get(mes_num, mes_num)} de {ano}",
+                "Preventiva": 0,
+                "Corretiva": 0,
+            }
+        if tipo == "Preventiva":
+            meses_dict[chave_mes]["Preventiva"] += 1
+        else:
+            meses_dict[chave_mes]["Corretiva"] += 1
+
+    mttr_horas = (
+        (horas_corretivas / total_corretiva) if total_corretiva > 0 else 0.0
+    )
+    mttr_str = horas_decimais_para_hhmm(mttr_horas) if total_corretiva > 0 else "N/D"
+
+    datas_corretivas.sort()
+    if len(datas_corretivas) >= 2:
+        intervalo_total_h = (
+            datas_corretivas[-1] - datas_corretivas[0]
+        ).total_seconds() / 3600.0
+        mtbf_horas = max(
+            0.0, (intervalo_total_h - horas_corretivas) / (len(datas_corretivas) - 1)
         )
+        mtbf_str = (
+            f"{round(mtbf_horas / 24, 1)} dias"
+            if mtbf_horas >= 24
+            else horas_decimais_para_hhmm(mtbf_horas)
+        )
+    else:
+        mtbf_str = "N/D"
+
+    ranking_maquinas = sorted(
+        maquinas_stats.values(), key=lambda x: x["horas"], reverse=True
+    )[:5]
+    for r in ranking_maquinas:
+        r["horas_str"] = horas_decimais_para_hhmm(r["horas"])
+
+    meses_ordenados = sorted(meses_dict.values(), key=lambda x: x["chave"])
+    dados_tabela = []
+    for m in meses_ordenados:
+        prev, corr = m["Preventiva"], m["Corretiva"]
+        tot = prev + corr
+        dados_tabela.append({
+            "chave": m["chave"],
+            "mes_nome": m["mes_nome"],
+            "total": tot,
+            "prev_qtd": prev,
+            "prev_pct": round(prev / tot * 100, 1) if tot else 0,
+            "corr_qtd": corr,
+            "corr_pct": round(corr / tot * 100, 1) if tot else 0,
+        })
+
+    total_fin = total_preventiva + total_corretiva
+
+    chaves_eq = sorted({c for c in (chave_mes_os(o) for o in ordens_fin) if c})
+    meses_eq = [
+        {
+            "chave": c,
+            "nome": (
+                f"{MESES_PT.get(c.split('-')[1], c.split('-')[1])} de"
+                f" {c.split('-')[0]}"
+            ),
+        }
+        for c in chaves_eq
+    ]
+    mes_sel = request.args.get("mes", "").strip()
+    if not mes_sel:
+        atual = datetime.now().strftime("%Y-%m")
+        mes_sel = atual if atual in chaves_eq else "geral"
+    ordens_fin_eq = [
+        o for o in ordens_fin if mes_sel == "geral" or chave_mes_os(o) == mes_sel
+    ]
+
+    duplas_calc = []
+    for d in DUPLAS:
+        membros = {d["mecanico"], d["eletricista"]}
+        horas, dias, qtd_os = 0.0, set(), 0
+        for o in ordens_fin_eq:
+            if {f.strip() for f in (o.funcionarios or "").split(",")} & membros:
+                horas += o.horas_trabalhadas or 0.0
+                qtd_os += 1
+                try:
+                    dias.add(datetime.strptime(o.finalizacao, FORMATO_DATA).date())
+                except (ValueError, TypeError):
+                    pass
+        cap = len(dias) * JORNADA_REFERENCIA
+        eficiencia = min(100.0, round(horas / cap * 100, 1)) if cap else 0.0
+        duplas_calc.append(
+            dict(
+                d,
+                horas=horas,
+                tempo_str=horas_decimais_para_hhmm(horas),
+                dias=len(dias),
+                qtd_os=qtd_os,
+                eficiencia=eficiencia,
+                eficiencia_clamp=int(eficiencia),
+            )
+        )
+
+    logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
+    tamanho_kb = (
+        round(os.path.getsize(DB_PATH) / 1024, 1)
+        if "sqlite" in app_db_uri and os.path.exists(DB_PATH)
+        else 0
+    )
+    qtd_backups = (
+        len([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")])
+        if "sqlite" in app_db_uri and os.path.exists(BACKUP_DIR)
+        else 0
     )
 
-  logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
-  tamanho_kb = (
-      round(os.path.getsize(DB_PATH) / 1024, 1)
-      if "sqlite" in app_db_uri and os.path.exists(DB_PATH)
-      else 0
-  )
-  qtd_backups = (
-      len([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")])
-      if "sqlite" in app_db_uri and os.path.exists(BACKUP_DIR)
-      else 0
-  )
-
-  return renderizar(
-      HTML_CENTRAL_GESTAO,
-      pecas=pecas,
-      movimentacoes=movimentacoes,
-      total_pecas=total_pecas,
-      total_quantidade=total_quantidade,
-      itens_baixo=itens_baixo,
-      total_movimentacoes=HistoricoMovimentacao.query.count(),
-      maquinas=maquinas,
-      mapa_estoque=mapa_estoque,
-      planos=planos,
-      total_planos=len(planos),
-      agendados=len(planos) - atrasados,
-      atrasados=atrasados,
-      proximos=proximos,
-      compras=compras,
-      repor_item=repor_item,
-      hoje=hoje_iso(),
-      total_sc=total_sc,
-      emergenciais=emergenciais,
-      programadas=programadas,
-      reposicao=reposicao,
-      proxima_sc=gerar_numero_sc(),
-      centros_custo_opcoes=CENTROS_CUSTO_OFICIAIS,
-      total_preventiva=total_preventiva,
-      total_corretiva=total_corretiva,
-      total_fin=total_fin,
-      total_meses=len(meses_ordenados),
-      pct_geral_prev=round(total_preventiva / total_fin * 100, 1)
-      if total_fin
-      else 0,
-      mttr_str=mttr_str,
-      mtbf_str=mtbf_str,
-      ranking_maquinas=ranking_maquinas,
-      dados_tabela=dados_tabela,
-      duplas=duplas_calc,
-      meses=meses_eq,
-      mes_sel=mes_sel,
-      logs=logs,
-      tamanho_db=tamanho_kb,
-      backups_locais=qtd_backups,
-  )
+    return renderizar(
+        HTML_CENTRAL_GESTAO,
+        pecas=pecas,
+        movimentacoes=movimentacoes,
+        total_pecas=total_pecas,
+        total_quantidade=total_quantidade,
+        itens_baixo=itens_baixo,
+        total_movimentacoes=HistoricoMovimentacao.query.count(),
+        maquinas=maquinas,
+        mapa_estoque=mapa_estoque,
+        planos=planos,
+        total_planos=len(planos),
+        agendados=len(planos) - atrasados,
+        atrasados=atrasados,
+        proximos=proximos,
+        compras=compras,
+        repor_item=repor_item,
+        hoje=hoje_iso(),
+        total_sc=total_sc,
+        emergenciais=emergenciais,
+        programadas=programadas,
+        reposicao=reposicao,
+        proxima_sc=gerar_numero_sc(),
+        centros_custo_opcoes=CENTROS_CUSTO_OFICIAIS,
+        total_preventiva=total_preventiva,
+        total_corretiva=total_corretiva,
+        total_fin=total_fin,
+        total_meses=len(meses_ordenados),
+        pct_geral_prev=round(total_preventiva / total_fin * 100, 1)
+        if total_fin
+        else 0,
+        mttr_str=mttr_str,
+        mtbf_str=mtbf_str,
+        ranking_maquinas=ranking_maquinas,
+        dados_tabela=dados_tabela,
+        duplas=duplas_calc,
+        meses=meses_eq,
+        mes_sel=mes_sel,
+        logs=logs,
+        tamanho_db=tamanho_kb,
+        backups_locais=qtd_backups,
+    )
 
 
 # --- ROTAS DE AÇÕES AUXILIARES DA CENTRAL ---
 @app.route("/estoque/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_peca():
-  codigo = request.form.get("codigo", "").strip().upper()
-  nome = request.form.get("nome", "").strip()
-  try:
-    quantidade = int(request.form.get("quantidade", 0))
-    estoque_minimo = int(request.form.get("estoque_minimo", 2))
-  except ValueError:
-    flash("Valores inválidos.")
+    codigo = request.form.get("codigo", "").strip().upper()
+    nome = request.form.get("nome", "").strip()
+    try:
+        quantidade = int(request.form.get("quantidade", 0))
+        estoque_minimo = int(request.form.get("estoque_minimo", 2))
+    except ValueError:
+        flash("Valores inválidos.")
+        return redirect(url_for("central_gestao"))
+    if not codigo or not nome:
+        flash("Código e Nome obrigatórios.")
+        return redirect(url_for("central_gestao"))
+    try:
+        with estoque_lock:
+            nova_peca = ItemEstoque(
+                codigo=codigo,
+                nome=nome,
+                categoria=request.form.get("categoria", "Geral"),
+                localizacao=request.form.get("localizacao", ""),
+                quantidade=quantidade,
+                estoque_minimo=estoque_minimo,
+                ultima_atualizacao=agora_formatado(),
+            )
+            db.session.add(nova_peca)
+            db.session.commit()
+            registrar_auditoria(
+                "Estoque", "Cadastro de Peça", f"SKU {codigo} — {nome} ({quantidade} un)"
+            )
+        flash(f"Peça {nome} cadastrada!")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao cadastrar peça.")
     return redirect(url_for("central_gestao"))
-  if not codigo or not nome:
-    flash("Código e Nome obrigatórios.")
-    return redirect(url_for("central_gestao"))
-  try:
-    with estoque_lock:
-      nova_peca = ItemEstoque(
-          codigo=codigo,
-          nome=nome,
-          categoria=request.form.get("categoria", "Geral"),
-          localizacao=request.form.get("localizacao", ""),
-          quantidade=quantidade,
-          estoque_minimo=estoque_minimo,
-          ultima_atualizacao=agora_formatado(),
-      )
-      db.session.add(nova_peca)
-      db.session.commit()
-      registrar_auditoria(
-          "Estoque", "Cadastro de Peça", f"SKU {codigo} — {nome} ({quantidade} un)"
-      )
-    flash(f"Peça {nome} cadastrada!")
-  except Exception:
-    db.session.rollback()
-    flash("Erro ao cadastrar peça.")
-  return redirect(url_for("central_gestao"))
 
 
 @app.route("/estoque/editar/<int:id>", methods=["POST"])
 @requer_login
 def editar_peca(id):
-  peca = db.session.get(ItemEstoque, id)
-  if peca:
-    peca.codigo = request.form.get("codigo", "").strip().upper()
-    peca.nome = request.form.get("nome", "").strip()
-    peca.categoria = request.form.get("categoria", "").strip()
-    peca.localizacao = request.form.get("localizacao", "").strip()
-    try:
-      peca.estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
-    except ValueError:
-      pass
-    peca.ultima_atualizacao = agora_formatado()
-    db.session.commit()
-    registrar_auditoria("Estoque", "Edição de Peça", f"SKU {peca.codigo} atualizado")
-    flash("Peça atualizada!")
-  return redirect(url_for("central_gestao"))
+    peca = db.session.get(ItemEstoque, id)
+    if peca:
+        peca.codigo = request.form.get("codigo", "").strip().upper()
+        peca.nome = request.form.get("nome", "").strip()
+        peca.categoria = request.form.get("categoria", "").strip()
+        peca.localizacao = request.form.get("localizacao", "").strip()
+        try:
+            peca.estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
+        except ValueError:
+            pass
+        peca.ultima_atualizacao = agora_formatado()
+        db.session.commit()
+        registrar_auditoria("Estoque", "Edição de Peça", f"SKU {peca.codigo} atualizado")
+        flash("Peça atualizada!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/estoque/movimentar/<int:id>", methods=["POST"])
 @requer_login
 def movimentar_estoque(id):
-  peca = db.session.get(ItemEstoque, id)
-  tipo = request.form.get("tipo")
-  solicitante = request.form.get("solicitante", "").strip()
-  try:
-    qtd = int(request.form.get("qtd", 0))
-  except ValueError:
-    qtd = 0
-  if peca and qtd > 0:
-    with estoque_lock:
-      if tipo == "Retirada":
-        if peca.quantidade < qtd:
-          flash("Estoque insuficiente!")
-          return redirect(url_for("central_gestao"))
-        peca.quantidade -= qtd
-      else:
-        peca.quantidade += qtd
-      peca.ultima_atualizacao = agora_formatado()
-      db.session.add(
-          HistoricoMovimentacao(
-              peca_codigo=peca.codigo,
-              peca_nome=peca.nome,
-              tipo=tipo,
-              quantidade=qtd,
-              solicitante=solicitante or "Almoxarifado",
-              data_hora=agora_formatado(),
-          )
-      )
-      db.session.commit()
-      registrar_auditoria(
-          "Estoque",
-          "Movimentação",
-          f"{tipo} de {qtd}x SKU {peca.codigo} ({peca.nome})",
-      )
-    flash("Movimentação registrada!")
-  return redirect(url_for("central_gestao"))
+    peca = db.session.get(ItemEstoque, id)
+    tipo = request.form.get("tipo")
+    solicitante = request.form.get("solicitante", "").strip()
+    try:
+        qtd = int(request.form.get("qtd", 0))
+    except ValueError:
+        qtd = 0
+    if peca and qtd > 0:
+        with estoque_lock:
+            if tipo == "Retirada":
+                if peca.quantidade < qtd:
+                    flash("Estoque insuficiente!")
+                    return redirect(url_for("central_gestao"))
+                peca.quantidade -= qtd
+            else:
+                peca.quantidade += qtd
+            peca.ultima_atualizacao = agora_formatado()
+            db.session.add(
+                HistoricoMovimentacao(
+                    peca_codigo=peca.codigo,
+                    peca_nome=peca.nome,
+                    tipo=tipo,
+                    quantidade=qtd,
+                    solicitante=solicitante or "Almoxarifado",
+                    data_hora=agora_formatado(),
+                )
+            )
+            db.session.commit()
+            registrar_auditoria(
+                "Estoque",
+                "Movimentação",
+                f"{tipo} de {qtd}x SKU {peca.codigo} ({peca.nome})",
+            )
+        flash("Movimentação registrada!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/estoque/excluir/<int:id>", methods=["POST"])
 @requer_login
 def excluir_peca(id):
-  peca = db.session.get(ItemEstoque, id)
-  if peca:
-    nome = peca.nome
-    db.session.delete(peca)
-    db.session.commit()
-    registrar_auditoria("Estoque", "Exclusão de Peça", f"Peça {nome} excluída")
-    flash("Peça excluída!")
-  return redirect(url_for("central_gestao"))
+    peca = db.session.get(ItemEstoque, id)
+    if peca:
+        nome = peca.nome
+        db.session.delete(peca)
+        db.session.commit()
+        registrar_auditoria("Estoque", "Exclusão de Peça", f"Peça {nome} excluída")
+        flash("Peça excluída!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/estoque/excel")
 @requer_login
 def excel_estoque():
-  pecas = ItemEstoque.query.all()
-  dados = [
-      {
-          "Código": p.codigo,
-          "Nome": p.nome,
-          "Categoria": p.categoria,
-          "Localização": p.localizacao,
-          "Saldo": p.quantidade,
-          "Mínimo": p.estoque_minimo,
-          "Status": (
-              "Baixo" if p.quantidade <= p.estoque_minimo else "Normal"
-          ),
-      }
-      for p in pecas
-  ]
-  registrar_auditoria(
-      "Relatórios", "Exportação Excel Estoque", "Planilha de estoque gerada."
-  )
-  return gerar_excel(
-      pd.DataFrame(dados), "Estoque", "estoque", coluna_status="Status"
-  )
+    pecas = ItemEstoque.query.all()
+    dados = [
+        {
+            "Código": p.codigo,
+            "Nome": p.nome,
+            "Categoria": p.categoria,
+            "Localização": p.localizacao,
+            "Saldo": p.quantidade,
+            "Mínimo": p.estoque_minimo,
+            "Status": (
+                "Baixo" if p.quantidade <= p.estoque_minimo else "Normal"
+            ),
+        }
+        for p in pecas
+    ]
+    registrar_auditoria(
+        "Relatórios", "Exportação Excel Estoque", "Planilha de estoque gerada."
+    )
+    return gerar_excel(
+        pd.DataFrame(dados), "Estoque", "estoque", coluna_status="Status"
+    )
 
 
 @app.route("/spare-parts/qrcodes")
 @requer_login
 def etiquetas_qrcode():
-  maquinas = MaquinaSpare.query.all()
-  return render_template_string(HTML_QRCODES, maquinas=maquinas)
+    maquinas = MaquinaSpare.query.all()
+    return render_template_string(HTML_QRCODES, maquinas=maquinas)
 
 
 @app.route("/spare-parts/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_maquina_spare():
-  maquina = request.form.get("maquina", "").strip()
-  modelo = request.form.get("modelo", "").strip()
-  if maquina and modelo:
-    db.session.add(
-        MaquinaSpare(
-            maquina=maquina,
-            modelo=modelo,
-            setor=request.form.get("setor", "").strip(),
-            pecas_necessarias=request.form.get("pecas_necessarias", "").strip(),
+    maquina = request.form.get("maquina", "").strip()
+    modelo = request.form.get("modelo", "").strip()
+    if maquina and modelo:
+        db.session.add(
+            MaquinaSpare(
+                maquina=maquina,
+                modelo=modelo,
+                setor=request.form.get("setor", "").strip(),
+                pecas_necessarias=request.form.get("pecas_necessarias", "").strip(),
+            )
         )
-    )
-    db.session.commit()
-    registrar_auditoria(
-        "Spare Parts", "Cadastro Equipamento", f"{maquina} ({modelo})"
-    )
-    flash("Equipamento cadastrado!")
-  return redirect(url_for("central_gestao"))
+        db.session.commit()
+        registrar_auditoria(
+            "Spare Parts", "Cadastro Equipamento", f"{maquina} ({modelo})"
+        )
+        flash("Equipamento cadastrado!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/spare-parts/editar/<int:id>", methods=["POST"])
 @requer_login
 def editar_maquina_spare(id):
-  maq = db.session.get(MaquinaSpare, id)
-  if not maq:
-    flash("Equipamento não encontrado.")
+    maq = db.session.get(MaquinaSpare, id)
+    if not maq:
+        flash("Equipamento não encontrado.")
+        return redirect(url_for("central_gestao"))
+    maquina = request.form.get("maquina", "").strip()
+    modelo = request.form.get("modelo", "").strip()
+    if not maquina or not modelo:
+        flash("Nome da Máquina e Modelo são obrigatórios.")
+        return redirect(url_for("central_gestao"))
+    try:
+        maq.maquina = maquina
+        maq.modelo = modelo
+        maq.setor = request.form.get("setor", "").strip()
+        maq.pecas_necessarias = request.form.get("pecas_necessarias", "").strip()
+        registrar_auditoria(
+            "Spare Parts", "Edição de Equipamento", f"{maquina} ({modelo})"
+        )
+        db.session.commit()
+        flash(f"Equipamento '{maquina}' atualizado com sucesso!")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao atualizar equipamento.")
     return redirect(url_for("central_gestao"))
-  maquina = request.form.get("maquina", "").strip()
-  modelo = request.form.get("modelo", "").strip()
-  if not maquina or not modelo:
-    flash("Nome da Máquina e Modelo são obrigatórios.")
-    return redirect(url_for("central_gestao"))
-  try:
-    maq.maquina = maquina
-    maq.modelo = modelo
-    maq.setor = request.form.get("setor", "").strip()
-    maq.pecas_necessarias = request.form.get("pecas_necessarias", "").strip()
-    registrar_auditoria(
-        "Spare Parts", "Edição de Equipamento", f"{maquina} ({modelo})"
-    )
-    db.session.commit()
-    flash(f"Equipamento '{maquina}' atualizado com sucesso!")
-  except Exception:
-    db.session.rollback()
-    flash("Erro ao atualizar equipamento.")
-  return redirect(url_for("central_gestao"))
 
 
 @app.route("/spare-parts/excluir/<int:id>", methods=["POST"])
 @requer_login
 def excluir_maquina_spare(id):
-  maq = db.session.get(MaquinaSpare, id)
-  if maq:
-    nome = maq.maquina
-    db.session.delete(maq)
-    db.session.commit()
-    registrar_auditoria("Spare Parts", "Exclusão Equipamento", f"Equipamento {nome} excluído")
-    flash("Equipamento excluído!")
-  return redirect(url_for("central_gestao"))
+    maq = db.session.get(MaquinaSpare, id)
+    if maq:
+        nome = maq.maquina
+        db.session.delete(maq)
+        db.session.commit()
+        registrar_auditoria("Spare Parts", "Exclusão Equipamento", f"Equipamento {nome} excluído")
+        flash("Equipamento excluído!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/spare-parts/<int:id>/adicionar-peca", methods=["POST"])
 @requer_login
 def adicionar_peca_spare(id):
-  maq = db.session.get(MaquinaSpare, id)
-  nome_peca = request.form.get("nome_peca", "").strip()
-  if maq and nome_peca:
-    try:
-      q = int(request.form.get("quantidade", 1))
-    except ValueError:
-      q = 1
-    db.session.add(
-        PecaSpare(
-            maquina_spare_id=maq.id,
-            nome_peca=nome_peca,
-            codigo_peca=request.form.get("codigo_peca", "").strip().upper(),
-            quantidade=q,
-            observacao=request.form.get("observacao", "").strip(),
+    maq = db.session.get(MaquinaSpare, id)
+    nome_peca = request.form.get("nome_peca", "").strip()
+    if maq and nome_peca:
+        try:
+            q = int(request.form.get("quantidade", 1))
+        except ValueError:
+            q = 1
+        db.session.add(
+            PecaSpare(
+                maquina_spare_id=maq.id,
+                nome_peca=nome_peca,
+                codigo_peca=request.form.get("codigo_peca", "").strip().upper(),
+                quantidade=q,
+                observacao=request.form.get("observacao", "").strip(),
+            )
         )
-    )
-    db.session.commit()
-    registrar_auditoria(
-        "Spare Parts",
-        "Vínculo de Peça",
-        f"Peça {nome_peca} vinculada a {maq.maquina}",
-    )
-    flash("Peça de reposição vinculada!")
-  return redirect(url_for("central_gestao"))
+        db.session.commit()
+        registrar_auditoria(
+            "Spare Parts",
+            "Vínculo de Peça",
+            f"Peça {nome_peca} vinculada a {maq.maquina}",
+        )
+        flash("Peça de reposição vinculada!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/spare-parts/peca/excluir/<int:id>", methods=["POST"])
 @requer_login
 def excluir_peca_spare(id):
-  p = db.session.get(PecaSpare, id)
-  if p:
-    db.session.delete(p)
-    db.session.commit()
-    registrar_auditoria("Spare Parts", "Remoção Peça Spare", f"Peça {p.nome_peca} desvinculada")
-    flash("Peça removida!")
-  return redirect(url_for("central_gestao"))
+    p = db.session.get(PecaSpare, id)
+    if p:
+        db.session.delete(p)
+        db.session.commit()
+        registrar_auditoria("Spare Parts", "Remoção Peça Spare", f"Peça {p.nome_peca} desvinculada")
+        flash("Peça removida!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/pcm/gerar-os/<int:id>", methods=["POST"])
 @requer_login
 def gerar_os_pcm(id):
-  plano = db.session.get(PlanoPreventivo, id)
-  if plano:
-    atual = parse_data_br(plano.proxima_execucao) or date.today()
-    nova = avancar_data(atual, plano.frequencia)
-    with os_lock:
-      db.session.add(
-          OrdemServico(
-              numero_os=gerar_numero_os(),
-              solicitante="PCM Programado",
-              setor=plano.maquina,
-              titulo=f"Preventiva {plano.frequencia}",
-              descricao=plano.atividade,
-              prioridade="Média",
-              responsavel=plano.responsavel or "",
-              abertura=agora_formatado(),
-              status="Aberta",
-              tipo_manutencao="Preventiva",
-          )
-      )
-      plano.proxima_execucao = nova.strftime("%d/%m/%Y")
-      db.session.commit()
-      registrar_auditoria(
-          "PCM", "Geração O.S. Preventiva", f"Preventiva gerada para {plano.maquina}"
-      )
-    flash("O.S. preventiva gerada na fila!")
-  return redirect(url_for("central_gestao"))
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        atual = parse_data_br(plano.proxima_execucao) or date.today()
+        nova = avancar_data(atual, plano.frequencia)
+        with os_lock:
+            db.session.add(
+                OrdemServico(
+                    numero_os=gerar_numero_os(),
+                    solicitante="PCM Programado",
+                    setor=plano.maquina,
+                    titulo=f"Preventiva {plano.frequencia}",
+                    descricao=plano.atividade,
+                    prioridade="Média",
+                    responsavel=plano.responsavel or "",
+                    abertura=agora_formatado(),
+                    status="Aberta",
+                    tipo_manutencao="Preventiva",
+                )
+            )
+            plano.proxima_execucao = nova.strftime("%d/%m/%Y")
+            db.session.commit()
+            registrar_auditoria(
+                "PCM", "Geração O.S. Preventiva", f"Preventiva gerada para {plano.maquina}"
+            )
+        flash("O.S. preventiva gerada na fila!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/pcm/concluir/<int:id>", methods=["POST"])
 @requer_login
 def concluir_plano_pcm(id):
-  plano = db.session.get(PlanoPreventivo, id)
-  if plano:
-    atual = parse_data_br(plano.proxima_execucao) or date.today()
-    nova = avancar_data(atual, plano.frequencia)
-    with os_lock:
-      ag = agora_formatado()
-      db.session.add(
-          OrdemServico(
-              numero_os=gerar_numero_os(),
-              solicitante="PCM Automático",
-              setor=plano.maquina,
-              titulo=f"Preventiva {plano.frequencia}",
-              descricao=plano.atividade,
-              prioridade="Média",
-              responsavel=plano.responsavel or "",
-              abertura=ag,
-              finalizacao=ag,
-              status="Finalizada",
-              tipo_manutencao="Preventiva",
-              horas_trabalhadas=1.0,
-              observacao_tecnica="Concluído via PCM.",
-          )
-      )
-      plano.proxima_execucao = nova.strftime("%d/%m/%Y")
-      db.session.commit()
-      registrar_auditoria(
-          "PCM", "Conclusão Preventiva", f"Plano concluído e reagendado para {plano.maquina}"
-      )
-    flash("Preventiva concluída e reagendada!")
-  return redirect(url_for("central_gestao"))
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        atual = parse_data_br(plano.proxima_execucao) or date.today()
+        nova = avancar_data(atual, plano.frequencia)
+        with os_lock:
+            ag = agora_formatado()
+            db.session.add(
+                OrdemServico(
+                    numero_os=gerar_numero_os(),
+                    solicitante="PCM Automático",
+                    setor=plano.maquina,
+                    titulo=f"Preventiva {plano.frequencia}",
+                    descricao=plano.atividade,
+                    prioridade="Média",
+                    responsavel=plano.responsavel or "",
+                    abertura=ag,
+                    finalizacao=ag,
+                    status="Finalizada",
+                    tipo_manutencao="Preventiva",
+                    horas_trabalhadas=1.0,
+                    observacao_tecnica="Concluído via PCM.",
+                )
+            )
+            plano.proxima_execucao = nova.strftime("%d/%m/%Y")
+            db.session.commit()
+            registrar_auditoria(
+                "PCM", "Conclusão Preventiva", f"Plano concluído e reagendado para {plano.maquina}"
+            )
+        flash("Preventiva concluída e reagendada!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/pcm/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_plano_pcm():
-  maq = request.form.get("maquina", "").strip()
-  ativ = request.form.get("atividade", "").strip()
-  prox = request.form.get("proxima_execucao", "").strip()
-  if maq and ativ and prox:
-    if "-" in prox:
-      p = prox.split("-")
-      prox = f"{p[2]}/{p[1]}/{p[0]}"
-    db.session.add(
-        PlanoPreventivo(
-            maquina=maq,
-            codigo_maquina=request.form.get("codigo_maquina", "")
-            .strip()
-            .upper(),
-            setor=request.form.get("setor", "").strip(),
-            atividade=ativ,
-            frequencia=request.form.get("frequencia", "Mensal"),
-            responsavel=request.form.get("responsavel", "").strip(),
-            proxima_execucao=prox,
+    maq = request.form.get("maquina", "").strip()
+    ativ = request.form.get("atividade", "").strip()
+    prox = request.form.get("proxima_execucao", "").strip()
+    if maq and ativ and prox:
+        if "-" in prox:
+            p = prox.split("-")
+            prox = f"{p[2]}/{p[1]}/{p[0]}"
+        db.session.add(
+            PlanoPreventivo(
+                maquina=maq,
+                codigo_maquina=request.form.get("codigo_maquina", "")
+                .strip()
+                .upper(),
+                setor=request.form.get("setor", "").strip(),
+                atividade=ativ,
+                frequencia=request.form.get("frequencia", "Mensal"),
+                responsavel=request.form.get("responsavel", "").strip(),
+                proxima_execucao=prox,
+            )
         )
-    )
-    db.session.commit()
-    registrar_auditoria("PCM", "Cadastro Plano", f"Plano preventivo criado para {maq}")
-    flash("Plano preventivo cadastrado!")
-  return redirect(url_for("central_gestao"))
+        db.session.commit()
+        registrar_auditoria("PCM", "Cadastro Plano", f"Plano preventivo criado para {maq}")
+        flash("Plano preventivo cadastrado!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/pcm/editar/<int:id>", methods=["POST"])
 @requer_login
 def editar_plano_pcm(id):
-  plano = db.session.get(PlanoPreventivo, id)
-  if plano:
-    plano.maquina = request.form.get("maquina", "").strip()
-    plano.codigo_maquina = (
-        request.form.get("codigo_maquina", "").strip().upper()
-    )
-    plano.setor = request.form.get("setor", "").strip()
-    plano.atividade = request.form.get("atividade", "").strip()
-    plano.frequencia = request.form.get("frequencia", "Mensal")
-    plano.responsavel = request.form.get("responsavel", "").strip()
-    prox = request.form.get("proxima_execucao", "").strip()
-    if "-" in prox:
-      p = prox.split("-")
-      prox = f"{p[2]}/{p[1]}/{p[0]}"
-    plano.proxima_execucao = prox
-    db.session.commit()
-    registrar_auditoria("PCM", "Edição Plano", f"Plano preventivo atualizado ({plano.maquina})")
-    flash("Plano preventivo atualizado!")
-  return redirect(url_for("central_gestao"))
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        plano.maquina = request.form.get("maquina", "").strip()
+        plano.codigo_maquina = (
+            request.form.get("codigo_maquina", "").strip().upper()
+        )
+        plano.setor = request.form.get("setor", "").strip()
+        plano.atividade = request.form.get("atividade", "").strip()
+        plano.frequencia = request.form.get("frequencia", "Mensal")
+        plano.responsavel = request.form.get("responsavel", "").strip()
+        prox = request.form.get("proxima_execucao", "").strip()
+        if "-" in prox:
+            p = prox.split("-")
+            prox = f"{p[2]}/{p[1]}/{p[0]}"
+        plano.proxima_execucao = prox
+        db.session.commit()
+        registrar_auditoria("PCM", "Edição Plano", f"Plano preventivo atualizado ({plano.maquina})")
+        flash("Plano preventivo atualizado!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/pcm/excluir/<int:id>", methods=["POST"])
 @requer_login
 def excluir_plano_pcm(id):
-  p = db.session.get(PlanoPreventivo, id)
-  if p:
-    maq = p.maquina
-    db.session.delete(p)
-    db.session.commit()
-    registrar_auditoria("PCM", "Exclusão Plano", f"Plano preventivo excluído ({maq})")
-    flash("Plano excluído!")
-  return redirect(url_for("central_gestao"))
+    p = db.session.get(PlanoPreventivo, id)
+    if p:
+        maq = p.maquina
+        db.session.delete(p)
+        db.session.commit()
+        registrar_auditoria("PCM", "Exclusão Plano", f"Plano preventivo excluído ({maq})")
+        flash("Plano excluído!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/pcm/excel")
 @requer_login
 def excel_pcm():
-  planos = PlanoPreventivo.query.all()
-  dados = [
-      {
-          "Máquina": p.maquina,
-          "Tag": p.codigo_maquina,
-          "Setor": p.setor,
-          "Frequência": p.frequencia,
-          "Próxima": p.proxima_execucao,
-          "Responsável": p.responsavel,
-          "Status": status_plano(p),
-      }
-      for p in planos
-  ]
-  registrar_auditoria("Relatórios", "Exportação Excel PCM", "Cronograma PCM gerado.")
-  return gerar_excel(pd.DataFrame(dados), "PCM", "pcm", coluna_status="Status")
+    planos = PlanoPreventivo.query.all()
+    dados = [
+        {
+            "Máquina": p.maquina,
+            "Tag": p.codigo_maquina,
+            "Setor": p.setor,
+            "Frequência": p.frequencia,
+            "Próxima": p.proxima_execucao,
+            "Responsável": p.responsavel,
+            "Status": status_plano(p),
+        }
+        for p in planos
+    ]
+    registrar_auditoria("Relatórios", "Exportação Excel PCM", "Cronograma PCM gerado.")
+    return gerar_excel(pd.DataFrame(dados), "PCM", "pcm", coluna_status="Status")
 
 
 @app.route("/compras/imprimir/<int:id>")
 @requer_login
 def imprimir_sc(id):
-  sc = db.session.get(SolicitacaoCompra, id)
-  if not sc:
-    flash("S.C. não encontrada.")
-    return redirect(url_for("central_gestao"))
-  return render_template_string(HTML_IMPRESSAO_SC, sc=sc)
+    sc = db.session.get(SolicitacaoCompra, id)
+    if not sc:
+        flash("S.C. não encontrada.")
+        return redirect(url_for("central_gestao"))
+    return render_template_string(HTML_IMPRESSAO_SC, sc=sc)
 
 
 @app.route("/compras/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_compras():
-  sol = request.form.get("solicitante", "").strip()
-  obj = request.form.get("objeto_solicitacao", "").strip()
-  descritivos = request.form.getlist("descritivo_material[]")
-  if not sol or not obj or not any(descritivos):
-    flash("Preencha os campos obrigatórios da S.C.")
+    sol = request.form.get("solicitante", "").strip()
+    obj = request.form.get("objeto_solicitacao", "").strip()
+    descritivos = request.form.getlist("descritivo_material[]")
+    if not sol or not obj or not any(descritivos):
+        flash("Preencha os campos obrigatórios da S.C.")
+        return redirect(url_for("central_gestao"))
+    try:
+        with sc_lock:
+            sc = SolicitacaoCompra(
+                numero_sc=request.form.get("numero_sc", "").strip()
+                or gerar_numero_sc(),
+                tipo_sc=request.form.get("tipo_sc", "S.C. Emergencial"),
+                solicitante=sol,
+                setor_solicitante=request.form.get("setor_solicitante", "").strip(),
+                responsaveis_duvidas=request.form.get(
+                    "responsaveis_duvidas", ""
+                ).strip(),
+                centro_custo=request.form.get("centro_custo", "").strip(),
+                objeto_solicitacao=obj,
+                data_solicitacao=request.form.get("data_solicitacao", "").strip(),
+                status_aprovacao="Aguardando Aprovação",
+            )
+            db.session.add(sc)
+            db.session.flush()
+            for d, q, u, l in zip(
+                descritivos,
+                request.form.getlist("quantidade[]"),
+                request.form.getlist("unidade[]"),
+                request.form.getlist("link_referencia[]"),
+            ):
+                if d.strip():
+                    db.session.add(
+                        ItemSolicitacaoCompra(
+                            solicitacao_id=sc.id,
+                            descritivo=d.strip(),
+                            quantidade=max(1, int(q or 1)),
+                            unidade=u or "Un",
+                            link_referencia=l.strip(),
+                        )
+                    )
+            db.session.commit()
+            registrar_auditoria(
+                "Compras", "Nova S.C.", f"S.C. {sc.numero_sc} registrada ({obj})"
+            )
+        flash("Solicitação de Compra registrada!")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao registrar S.C.")
     return redirect(url_for("central_gestao"))
-  try:
-    with sc_lock:
-      sc = SolicitacaoCompra(
-          numero_sc=request.form.get("numero_sc", "").strip()
-          or gerar_numero_sc(),
-          tipo_sc=request.form.get("tipo_sc", "S.C. Emergencial"),
-          solicitante=sol,
-          setor_solicitante=request.form.get("setor_solicitante", "").strip(),
-          responsaveis_duvidas=request.form.get(
-              "responsaveis_duvidas", ""
-          ).strip(),
-          centro_custo=request.form.get("centro_custo", "").strip(),
-          objeto_solicitacao=obj,
-          data_solicitacao=request.form.get("data_solicitacao", "").strip(),
-          status_aprovacao="Aguardando Aprovação",
-      )
-      db.session.add(sc)
-      db.session.flush()
-      for d, q, u, l in zip(
-          descritivos,
-          request.form.getlist("quantidade[]"),
-          request.form.getlist("unidade[]"),
-          request.form.getlist("link_referencia[]"),
-      ):
-        if d.strip():
-          db.session.add(
-              ItemSolicitacaoCompra(
-                  solicitacao_id=sc.id,
-                  descritivo=d.strip(),
-                  quantidade=max(1, int(q or 1)),
-                  unidade=u or "Un",
-                  link_referencia=l.strip(),
-              )
-          )
-      db.session.commit()
-      registrar_auditoria(
-          "Compras", "Nova S.C.", f"S.C. {sc.numero_sc} registrada ({obj})"
-      )
-    flash("Solicitação de Compra registrada!")
-  except Exception:
-    db.session.rollback()
-    flash("Erro ao registrar S.C.")
-  return redirect(url_for("central_gestao"))
 
 
 @app.route("/compras/atualizar-status/<int:id>", methods=["POST"])
 @requer_login
 def atualizar_status_sc(id):
-  sc = db.session.get(SolicitacaoCompra, id)
-  if not sc:
-    return jsonify({"ok": False}), 404
-  novo_status = request.form.get(
-      "status_aprovacao", "Aguardando Aprovação"
-  ).strip()
-  sc.status_aprovacao = novo_status
-  db.session.commit()
-  registrar_auditoria(
-      "Compras", "Atualização Status S.C.", f"S.C. {sc.numero_sc} alterada para {novo_status}"
-  )
-  return jsonify({"ok": True})
+    sc = db.session.get(SolicitacaoCompra, id)
+    if not sc:
+        return jsonify({"ok": False}), 404
+    novo_status = request.form.get(
+        "status_aprovacao", "Aguardando Aprovação"
+    ).strip()
+    sc.status_aprovacao = novo_status
+    db.session.commit()
+    registrar_auditoria(
+        "Compras", "Atualização Status S.C.", f"S.C. {sc.numero_sc} alterada para {novo_status}"
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/compras/excluir/<int:id>", methods=["POST"])
 @requer_login
 def excluir_compras(id):
-  sc = db.session.get(SolicitacaoCompra, id)
-  if sc:
-    num = sc.numero_sc
-    db.session.delete(sc)
-    db.session.commit()
-    registrar_auditoria("Compras", "Exclusão S.C.", f"S.C. {num} excluída")
-    flash("S.C. excluída!")
-  return redirect(url_for("central_gestao"))
+    sc = db.session.get(SolicitacaoCompra, id)
+    if sc:
+        num = sc.numero_sc
+        db.session.delete(sc)
+        db.session.commit()
+        registrar_auditoria("Compras", "Exclusão S.C.", f"S.C. {num} excluída")
+        flash("S.C. excluída!")
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/compras/excel")
 @requer_login
 def excel_compras():
-  compras = SolicitacaoCompra.query.all()
-  dados = [
-      {
-          "S.C.": sc.numero_sc,
-          "Tipo": sc.tipo_sc,
-          "Solicitante": sc.solicitante,
-          "Centro Custo": sc.centro_custo,
-          "Objeto": sc.objeto_solicitacao,
-          "Status": sc.status_aprovacao,
-      }
-      for sc in compras
-  ]
-  registrar_auditoria("Relatórios", "Exportação Excel Compras", "Relatório de S.C. gerado.")
-  return gerar_excel(
-      pd.DataFrame(dados), "Compras", "compras", coluna_status="Status"
-  )
+    compras = SolicitacaoCompra.query.all()
+    dados = [
+        {
+            "S.C.": sc.numero_sc,
+            "Tipo": sc.tipo_sc,
+            "Solicitante": sc.solicitante,
+            "Centro Custo": sc.centro_custo,
+            "Objeto": sc.objeto_solicitacao,
+            "Status": sc.status_aprovacao,
+        }
+        for sc in compras
+    ]
+    registrar_auditoria("Relatórios", "Exportação Excel Compras", "Relatório de S.C. gerado.")
+    return gerar_excel(
+        pd.DataFrame(dados), "Compras", "compras", coluna_status="Status"
+    )
 
 
 def obter_ip_local():
-  s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-  try:
-    s.connect(("8.8.8.8", 80))
-    ip = s.getsockname()[0]
-  except Exception:
-    ip = "127.0.0.1"
-  finally:
-    s.close()
-  return ip
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
 
 
 if __name__ == "__main__":
-  modo_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-  PORTA = int(os.environ.get("PORT", "5000"))
-  ip_local = obter_ip_local()
+    modo_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    PORTA = int(os.environ.get("PORT", "5000"))
+    ip_local = obter_ip_local()
 
-  print(f"\n========================================================")
-  print(f"🚀 Servidor Web rodando com sucesso!")
-  print(f"💻 Neste computador (Local): http://127.0.0.1:{PORTA}/")
-  print(f"🌐 Na rede (Outros PCs / Celulares): http://{ip_local}:{PORTA}/")
-  print(f"========================================================\n")
+    print(f"\n========================================================\n")
+    print(f"🚀 Servidor Web rodando com sucesso!")
+    print(f"💻 Neste computador (Local): http://127.0.0.1:{PORTA}/")
+    print(f"🌐 Na rede (Outros PCs / Celulares): http://{ip_local}:{PORTA}/")
+    print(f"========================================================\n")
 
-  app.run(debug=modo_debug, host="0.0.0.0", port=PORTA)
+    app.run(debug=modo_debug, host="0.0.0.0", port=PORTA)
