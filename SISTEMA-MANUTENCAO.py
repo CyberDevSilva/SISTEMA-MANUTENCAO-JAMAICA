@@ -115,7 +115,7 @@ def configurar_sqlite(dbapi_connection, connection_record):
 # ==============================================================================
 FORMATO_DATA = "%d/%m/%Y %H:%M:%S"
 PREFIXO_ANO_OS = "26"
-NUMERO_OS_INICIAL = 1897
+NUMERO_OS_INICIAL = 1917
 
 PREFIXO_ANO_SC = "26"
 NUMERO_SC_INICIAL = 495
