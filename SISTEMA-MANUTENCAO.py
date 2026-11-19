@@ -12,7 +12,7 @@ from threading import Lock
 
 import pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from sqlalchemy import event, text
+from sqlalchemy import event, text, inspect
 from sqlalchemy.engine import Engine
 from flask import (
     Flask,
@@ -33,15 +33,31 @@ import json
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 # ==============================================================================
-# CONFIGURAÇÃO DO BANCO DE DADOS (SQLite Local)
+# CONFIGURAÇÃO DO BANCO DE DADOS (PostgreSQL via DATABASE_URL ou SQLite Local)
 # ==============================================================================
 DB_PATH = os.path.join(BASE_DIR, "os.db")
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 os.makedirs(BACKUP_DIR, exist_ok=True)
-app_db_uri = f"sqlite:///{DB_PATH}"
+
+
+def obter_database_uri():
+    raw_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if raw_url:
+        if raw_url.startswith("postgres://"):
+            raw_url = raw_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif raw_url.startswith("postgresql://") and "+psycopg2" not in raw_url:
+            raw_url = raw_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return raw_url, True
+    return f"sqlite:///{DB_PATH}", False
+
+
+app_db_uri, IS_POSTGRES = obter_database_uri()
 
 
 def carregar_chave_secreta():
+    env_secret = (os.environ.get("SECRET_KEY") or "").strip()
+    if env_secret:
+        return env_secret
     caminho = os.path.join(BASE_DIR, ".secret_key")
     try:
         with open(caminho, "r", encoding="utf-8") as f:
@@ -66,18 +82,32 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600
 app.config["SQLALCHEMY_DATABASE_URI"] = app_db_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"timeout": 30}}
+
+if IS_POSTGRES:
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    }
+else:
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "connect_args": {"timeout": 30},
+    }
 
 db = SQLAlchemy(app)
 
 
 @event.listens_for(Engine, "connect")
 def configurar_sqlite(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL;")
-    cursor.execute("PRAGMA synchronous=NORMAL;")
-    cursor.execute("PRAGMA foreign_keys=ON;")
-    cursor.close()
+    if IS_POSTGRES:
+        return
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.close()
+    except Exception:
+        pass
 
 
 # ==============================================================================
@@ -400,7 +430,7 @@ def registrar_auditoria(modulo, acao, detalhes=""):
 
 
 def backup_automatico_diario():
-    if not os.path.exists(DB_PATH):
+    if IS_POSTGRES or not os.path.exists(DB_PATH):
         return
     hoje_str = date.today().strftime("%Y%m%d")
     destino = os.path.join(BACKUP_DIR, f"os_backup_{hoje_str}.db")
@@ -424,12 +454,8 @@ def backup_automatico_diario():
 def inicializar_banco():
     db.create_all()
     try:
-        cols = [
-            row[1]
-            for row in db.session.execute(
-                text("PRAGMA table_info(ordens_servico)")
-            ).fetchall()
-        ]
+        insp = inspect(db.engine)
+        cols = [c["name"] for c in insp.get_columns("ordens_servico")]
         if "observacao_tecnica" not in cols:
             db.session.execute(
                 text(
@@ -1095,7 +1121,7 @@ tr.sem-resultado { display: none; }
 .aguardando-peca { background: rgba(168, 85, 247, 0.18); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.38); }
 .finalizada, .estoque-ok { background: rgba(34, 197, 94, 0.14); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.32); }
 .estoque-baixo { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
-.v vencido { color: #f87171; }
+.vencido { color: #f87171; }
 
 .prioridade { font-weight: 700; }
 .prioridade-critica { color: #f87171; }
@@ -2283,11 +2309,18 @@ HTML_CENTRAL_GESTAO = r"""
 <div id="secao-governanca" class="painel-secao">
     <section class="card">
         <h2>💾 Segurança e Backup do Banco de Dados</h2>
-        <p class="muted">Gerenciamento e cópias de segurança do banco SQLite local (`os.db`).</p>
+        {% if is_postgres %}
+        <p class="muted">Banco em nuvem PostgreSQL ativo via <code>DATABASE_URL</code> (Neon). Backups e snapshots são gerenciados no painel da Neon.</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
+            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Motor: PostgreSQL (Nuvem)</span>
+        </div>
+        {% else %}
+        <p class="muted">Gerenciamento e cópias de segurança do banco SQLite local (<code>os.db</code>).</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
             <a href="{{url_for('baixar_backup_db')}}" class="botao excel">⬇ Baixar Cópia Completa do Banco (.db)</a>
             <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Tamanho: {{tamanho_db}} KB | {{backups_locais}} backup(s) automático(s)</span>
         </div>
+        {% endif %}
     </section>
 
     <section class="card">
@@ -2674,8 +2707,8 @@ def healthcheck():
 @app.route("/governanca/backup")
 @requer_login
 def baixar_backup_db():
-    if not os.path.exists(DB_PATH):
-        flash("Arquivo de banco de dados não encontrado.")
+    if IS_POSTGRES or not os.path.exists(DB_PATH):
+        flash("Backup direto em .db disponível apenas no modo SQLite local.")
         return redirect(url_for("central_gestao"))
     db.session.commit()
     registrar_auditoria(
@@ -3165,12 +3198,12 @@ def central_gestao():
     logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
     tamanho_kb = (
         round(os.path.getsize(DB_PATH) / 1024, 1)
-        if os.path.exists(DB_PATH)
+        if (not IS_POSTGRES and os.path.exists(DB_PATH))
         else 0
     )
     qtd_backups = (
         len([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")])
-        if os.path.exists(BACKUP_DIR)
+        if (not IS_POSTGRES and os.path.exists(BACKUP_DIR))
         else 0
     )
 
@@ -3215,6 +3248,7 @@ def central_gestao():
         logs=logs,
         tamanho_db=tamanho_kb,
         backups_locais=qtd_backups,
+        is_postgres=IS_POSTGRES,
     )
 
 
