@@ -118,7 +118,7 @@ PREFIXO_ANO_OS = "26"
 NUMERO_OS_INICIAL = 1917
 
 PREFIXO_ANO_SC = "26"
-NUMERO_SC_INICIAL = 495
+NUMERO_SC_INICIAL = 517
 
 os_lock = Lock()
 estoque_lock = Lock()
