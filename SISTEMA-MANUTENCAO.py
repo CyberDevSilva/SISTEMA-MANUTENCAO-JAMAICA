@@ -815,7 +815,7 @@ CSS_BASE = r"""
     --r: 14px;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: clip; }
 body {
     margin: 0;
     padding: 20px;
@@ -828,9 +828,9 @@ body {
         var(--bg);
     background-attachment: fixed;
     line-height: 1.45;
-    overflow-x: hidden;
+    overflow-x: clip;
 }
-.container { max-width: 1640px; width: 100%; margin: auto; animation: fadeIn .35s ease-out; }
+.container { max-width: 1640px; width: 100%; margin: auto; animation: fadeIn .35s ease-out; overflow-x: clip; }
 .muted { color: var(--mt); font-size: 13px; }
 
 /* CABEÇALHO E NAVEGAÇÃO */
@@ -944,7 +944,7 @@ body {
     border-color: var(--or);
     box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
 }
-.painel-secao { display: none; }
+.painel-secao { display: none; min-width: 0; }
 .painel-secao.ativo { display: block; animation: fadeIn .3s ease; }
 
 /* CARDS DE KPI */
@@ -1093,6 +1093,7 @@ table { width: 100%; min-width: 960px; border-collapse: collapse; }
 th, td {
     padding: 12px 12px; border-bottom: 1px solid #1f232e;
     text-align: left; font-size: 13px; vertical-align: middle;
+    overflow-wrap: break-word; word-wrap: break-word;
 }
 th {
     background: #0c0e12; color: var(--or2); white-space: nowrap;
@@ -1108,7 +1109,7 @@ tr.detalhe td {
     background: #0c0e12; padding: 16px 22px;
     border-left: 4px solid var(--or);
 }
-tr.detalhe p { white-space: pre-wrap; margin: 6px 0 0; }
+tr.detalhe p { white-space: pre-wrap; margin: 6px 0 0; overflow-wrap: break-word; }
 .vazio { text-align: center; padding: 32px !important; color: var(--mt); }
 tr.sem-resultado { display: none; }
 
@@ -1123,13 +1124,13 @@ tr.sem-resultado { display: none; }
 .estoque-baixo { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
 .vencido { color: #f87171; }
 
-.prioridade { font-weight: 700; }
+.prioridade { font-weight: 700; white-space: nowrap; }
 .prioridade-critica { color: #f87171; }
 .prioridade-alta { color: #fb923c; }
 .prioridade-media { color: #facc15; }
 .prioridade-baixa { color: #4ade80; }
 
-.tipo-badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 700; }
+.tipo-badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
 .tipo-preventiva { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
 .tipo-corretiva { background: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.3); }
 
@@ -1168,7 +1169,7 @@ tr.sem-resultado { display: none; }
     background: #14171f; border: 1px solid var(--bd); border-left: 5px solid var(--ok);
     border-radius: 12px; padding: 14px 38px 14px 16px; font-size: 13.5px;
     box-shadow: 0 15px 38px rgba(0, 0, 0, 0.65); position: relative;
-    animation: slideInRight .3s ease-out;
+    animation: slideInRight .3s ease-out; overflow-wrap: break-word;
 }
 .toast.erro { border-left-color: var(--er); }
 .toast .x {
@@ -1188,13 +1189,13 @@ tr.sem-resultado { display: none; }
     border-radius: 16px; padding: 24px;
     box-shadow: 0 25px 65px rgba(0, 0, 0, 0.85);
 }
-.modal h3 { margin: 0 0 6px; font-size: 20px; color: var(--or2); }
-.modal p { margin: 0 0 16px; }
+.modal h3 { margin: 0 0 6px; font-size: 20px; color: var(--or2); overflow-wrap: break-word; }
+.modal p { margin: 0 0 16px; overflow-wrap: break-word; }
 .modal .campo { margin-top: 14px; }
-.modal-acoes { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.modal-acoes { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; flex-wrap: wrap; }
 
 .stepper { display: flex; gap: 8px; }
-.stepper button { width: 44px; padding: 0; font-size: 20px; background: #262a36; }
+.stepper button { width: 44px; padding: 0; font-size: 20px; background: #262a36; flex-shrink: 0; }
 .stepper input { text-align: center; font-size: 17px; font-weight: 700; }
 .saldo {
     margin-top: 12px !important; padding: 11px; background: #0c0e12;
@@ -1206,9 +1207,10 @@ tr.sem-resultado { display: none; }
     display: flex; align-items: center; gap: 8px; font-weight: 500;
     color: var(--tx); cursor: pointer; background: #0c0e12;
     padding: 9px 11px; border: 1px solid var(--bd); border-radius: 8px; margin: 0;
+    line-height: 1.35;
 }
 .checkbox-grid label:hover { border-color: var(--or); }
-.checkbox-grid input[type="checkbox"] { width: auto; accent-color: var(--or); }
+.checkbox-grid input[type="checkbox"] { width: auto; accent-color: var(--or); flex-shrink: 0; }
 input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 
@@ -1234,46 +1236,76 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
 }
 .linha-item-sc-baixo input, .linha-item-sc-baixo select { flex: 1; min-width: 120px; }
-.rodape { text-align: center; color: #6b7280; font-size: 12px; padding: 18px 0 8px; }
+.rodape { text-align: center; color: #6b7280; font-size: 12px; padding: 18px 0 8px; overflow-wrap: break-word; }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
 
 @media (max-width: 860px) {
-    body { padding: 12px; padding-bottom: 85px; }
-    .cabecalho { padding: 16px; gap: 12px; }
+    body { padding: 12px; padding-bottom: 80px; line-height: 1.5; font-size: 14px; }
+    .cabecalho { padding: 15px; gap: 12px; margin-bottom: 16px; border-radius: 12px; }
     .cabecalho-principal { width: 100%; }
     .cabecalho-titulo { align-items: flex-start; gap: 10px; }
-    .logo-badge { width: 36px; height: 36px; font-size: 18px; }
-    .cabecalho h1 { font-size: 16px; line-height: 1.3; }
-    .cabecalho p { font-size: 12.5px; line-height: 1.35; }
-    .nav-abas { flex-direction: column; width: 100%; gap: 8px; }
+    .logo-badge { width: 34px; height: 34px; font-size: 17px; border-radius: 8px; }
+    .cabecalho h1 { font-size: 16.5px; line-height: 1.3; letter-spacing: 0.2px; }
+    .cabecalho p { font-size: 12.5px; line-height: 1.4; }
+    .nav-abas { flex-direction: column; width: 100%; gap: 8px; margin-top: 12px; }
     .aba, .botao-sair {
         white-space: normal;
-        word-break: break-word;
+        overflow-wrap: break-word;
         line-height: 1.35;
         width: 100%;
         justify-content: flex-start;
         padding: 10px 12px;
-        font-size: 12.5px;
+        font-size: 13px;
     }
     .cabecalho-lado { width: 100%; align-items: stretch; }
-    .relogio { text-align: center; font-size: 12px; }
-    .sub-abas-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-    .sub-aba-btn { white-space: normal; line-height: 1.25; padding: 9px 10px; font-size: 12px; text-align: center; }
-    .resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .resumo-card { padding: 14px; }
-    .resumo-card span { font-size: 11px; padding-right: 24px; line-height: 1.25; }
-    .resumo-card strong { font-size: 24px; }
-    .icone { right: 12px; top: 12px; font-size: 18px; }
-    .card { padding: 16px; }
-    .card h2 { font-size: 16px; }
-    details.card > summary { font-size: 15px; }
-    .form-grid, .form-grid.tres, .checkbox-grid, .grid-duplo, .grid-triplo { grid-template-columns: 1fr; }
+    .relogio { text-align: center; font-size: 12px; padding: 7px 12px; }
+
+    .sub-abas-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 8px; margin-bottom: 16px; }
+    .sub-aba-btn { white-space: normal; overflow-wrap: break-word; line-height: 1.3; padding: 9px 10px; font-size: 12px; text-align: center; }
+
+    .resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .resumo-card { padding: 14px; border-radius: 12px; }
+    .resumo-card span { font-size: 10.5px; padding-right: 22px; line-height: 1.3; letter-spacing: 0.4px; }
+    .resumo-card strong { font-size: 24px; line-height: 1.2; }
+    .resumo-card small { font-size: 11.5px; line-height: 1.35; overflow-wrap: break-word; }
+    .icone { right: 11px; top: 11px; font-size: 17px; }
+
+    .card { padding: 15px; margin-bottom: 16px; border-radius: 12px; }
+    .card h2 { font-size: 16px; line-height: 1.3; }
+    details.card > summary { font-size: 15px; line-height: 1.35; }
+    details.card > .conteudo { margin-top: 14px; padding-top: 14px; }
+
+    input, textarea, select { font-size: 14px; padding: 10px 12px; }
+    button, .botao { font-size: 13px; padding: 10px 14px; }
+
+    .filtros { gap: 8px; margin-top: 12px; }
+    .chip { padding: 6px 12px; font-size: 12px; }
+    .filtros select { max-width: 100%; font-size: 12px; }
+
+    /* Tabelas mais confortáveis e sem colunas esmagadas no mobile */
+    .tabela-wrapper { border-radius: 10px; }
+    table { min-width: 680px; }
+    th, td { padding: 10px 9px; font-size: 12.5px; line-height: 1.4; }
+    th { font-size: 10.5px; letter-spacing: 0.5px; }
+    .status { padding: 4px 9px; font-size: 11px; }
+    .tipo-badge, .sc-badge-emergencial, .sc-badge-programada, .sc-badge-reposicao { padding: 4px 8px; font-size: 11px; }
+    .acoes { gap: 5px; }
+    .acoes button, .acoes .botao { padding: 7px 10px; font-size: 11.5px; }
+    tr.detalhe td { padding: 14px; font-size: 13px; line-height: 1.5; }
+
+    .modal { padding: 18px; border-radius: 14px; max-height: 90vh; }
+    .modal h3 { font-size: 17.5px; line-height: 1.3; }
+    .modal-acoes { flex-direction: column-reverse; }
+    .modal-acoes button, .modal-acoes .botao { width: 100%; }
+
+    .form-grid, .form-grid.tres, .checkbox-grid, .grid-duplo, .grid-triplo { grid-template-columns: 1fr; gap: 12px; }
     .campo.completo { grid-column: auto; }
     .busca { min-width: 100%; }
-    .contagem { margin-left: 0; width: 100%; }
-    .toasts { left: 12px; right: 12px; max-width: none; }
+    .contagem { margin-left: 0; width: 100%; font-size: 12.5px; }
+    .toasts { left: 12px; right: 12px; top: 12px; max-width: none; }
+    .toast { font-size: 13px; line-height: 1.4; }
 }
 """
 
@@ -1681,8 +1713,8 @@ HTML_OS = r"""
                 <tr class="linha" data-status="{{st_code}}" data-prioridade="{{os.prioridade|lower|replace('í','i')|replace('é','e')}}">
                     <td><strong>{{os.numero_os}}</strong></td>
                     <td>{{os.solicitante}}</td>
-                    <td>{{os.setor or '-'}}</td>
-                    <td>{{os.titulo or '-'}}</td>
+                    <td style="max-width:190px">{{os.setor or '-'}}</td>
+                    <td style="max-width:240px">{{os.titulo or '-'}}</td>
                     <td><span class="prioridade prioridade-{{os.prioridade|lower|replace('í','i')|replace('é','e')}}">{{os.prioridade}}</span></td>
                     <td>{{os.responsavel or '-'}}</td>
                     <td>{% if os.tipo_manutencao %}<span class="tipo-badge tipo-{{os.tipo_manutencao|lower}}">{{os.tipo_manutencao}}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
@@ -1926,7 +1958,7 @@ HTML_CENTRAL_GESTAO = r"""
     <section class="card">
         <h2>Histórico Recente de Movimentações</h2>
         <div class="tabela-wrapper">
-            <table style="min-width:700px">
+            <table style="min-width:680px">
                 <thead><tr><th>Data / Hora</th><th>Tipo</th><th>Código</th><th>Peça</th><th>Qtd</th><th>Solicitante / Origem</th></tr></thead>
                 <tbody>
                 {% for m in movimentacoes %}
@@ -1999,7 +2031,7 @@ HTML_CENTRAL_GESTAO = r"""
             <div style="padding:6px 0">
                 <h4 style="margin:0 0 10px;color:var(--or2)">⚙️ Lista Técnica de Reposição</h4>
                 {% if m.pecas %}
-                <table style="margin-bottom:14px;background:#14171f;min-width:650px">
+                <table style="margin-bottom:14px;background:#14171f;min-width:620px">
                     <thead><tr><th>Componente / Peça</th><th>Código</th><th>Qtd</th><th>Saldo Estoque</th><th>Obs</th><th>Ação</th></tr></thead>
                     <tbody>
                     {% for p in m.pecas %}
@@ -2326,7 +2358,7 @@ HTML_CENTRAL_GESTAO = r"""
     <section class="card">
         <h2>🛡️ Trilha de Auditoria (Últimos 100 Eventos Críticos)</h2>
         <div class="tabela-wrapper">
-            <table style="min-width:750px">
+            <table style="min-width:680px">
                 <thead><tr><th>Data / Hora</th><th>Módulo</th><th>Ação</th><th>Detalhes</th></tr></thead>
                 <tbody>
                 {% for l in logs %}
@@ -2581,7 +2613,7 @@ th{background:#eee}
 .assinaturas div{border-top:1px solid #111;padding-top:6px;font-size:12px}
 @media print{.no-print{display:none}body{margin:0}}
 </style></head><body>
-<div class="no-print" style="max-width:820px;margin:0 auto 14px;text-align:right">
+<div class="no-print" style="max-width:820px;margin:0 auto 14mm;text-align:right">
     <button onclick="window.print()" style="padding:10px 18px;background:#ea580c;color:#fff;border:0;border-radius:6px;font-weight:bold;cursor:pointer">🖨️ Imprimir Solicitação de Compra</button>
 </div>
 <div class="box">
