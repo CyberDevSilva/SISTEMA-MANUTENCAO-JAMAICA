@@ -269,7 +269,7 @@ CENTROS_CUSTO_OFICIAIS = [
     "21562 – Sistema Operacional",
     "21563 – Tecnologia da Informação",
     "21571 – Departamento Pessoal",
-    "21213 – Adequações das NR's",
+    "21215 – Adequações das NR's",
 ]
 
 FAVICON_J = (
