@@ -269,7 +269,6 @@ CENTROS_CUSTO_OFICIAIS = [
     "21562 – Sistema Operacional",
     "21563 – Tecnologia da Informação",
     "21571 – Departamento Pessoal",
-    "21213 – Adequações das NR's",
 ]
 
 FAVICON_J = (
@@ -527,54 +526,6 @@ def service_worker():
 
 
 # ==============================================================================
-# API TEMPO REAL: NOTIFICAÇÃO GLOBAL ENTRE DISPOSITIVOS (O.S. E S.C.)
-# ==============================================================================
-@app.route("/api/ultimos-eventos")
-def api_ultimos_eventos():
-    ultima_os = OrdemServico.query.order_by(OrdemServico.id.desc()).first()
-    ultima_sc = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.desc()).first()
-
-    os_payload = None
-    if ultima_os:
-        os_payload = {
-            "id": ultima_os.id,
-            "titulo": "🚨 Nova Ordem de Serviço Aberta!",
-            "subtitulo": "Uma nova O.S. acabou de ser registrada no sistema.",
-            "codigo": f"O.S. Nº {ultima_os.numero_os}",
-            "url_imprimir": url_for("imprimir_os", id=ultima_os.id),
-            "recarregar": True,
-            "detalhes": [
-                {"label": "Solicitante", "valor": ultima_os.solicitante},
-                {"label": "Máquina / Equip.", "valor": ultima_os.setor or "Não informado"},
-                {"label": "Causa / Sintoma", "valor": ultima_os.titulo or "Não informado"},
-                {"label": "Prioridade", "valor": ultima_os.prioridade},
-                {"label": "Data / Hora", "valor": ultima_os.abertura},
-            ],
-        }
-
-    sc_payload = None
-    if ultima_sc:
-        is_logado = bool(session.get("logado_sistema"))
-        sc_payload = {
-            "id": ultima_sc.id,
-            "titulo": "🛒 Nova Solicitação de Compra (S.C.)!",
-            "subtitulo": "Um novo pedido de suprimentos foi registrado.",
-            "codigo": ultima_sc.numero_sc,
-            "url_imprimir": url_for("imprimir_sc", id=ultima_sc.id) if is_logado else None,
-            "recarregar": is_logado,
-            "detalhes": [
-                {"label": "Classificação", "valor": ultima_sc.tipo_sc},
-                {"label": "Solicitante", "valor": f"{ultima_sc.solicitante} ({ultima_sc.setor_solicitante or 'Manutenção'})"},
-                {"label": "Centro de Custo", "valor": ultima_sc.centro_custo or "-"},
-                {"label": "Objeto / Finalidade", "valor": ultima_sc.objeto_solicitacao},
-                {"label": "Itens Incluídos", "valor": f"{len(ultima_sc.itens)} item(ns)"},
-            ],
-        }
-
-    return jsonify({"os": os_payload, "sc": sc_payload})
-
-
-# ==============================================================================
 # FUNÇÕES UTILITÁRIAS E SEGURANÇA
 # ==============================================================================
 def agora_formatado():
@@ -738,15 +689,7 @@ def chave_mes_os(ordem):
 
 
 def renderizar(template, **contexto):
-    popup_data = session.pop("popup_confirmacao", None)
-    js = (
-        "window.__CSRF__="
-        + json.dumps(token_csrf())
-        + ";window.__POPUP__="
-        + json.dumps(popup_data)
-        + ";"
-        + JS_BASE
-    )
+    js = "window.__CSRF__=" + json.dumps(token_csrf()) + ";" + JS_BASE
     return render_template_string(
         template,
         css=CSS_BASE,
@@ -1217,7 +1160,7 @@ tr.sem-resultado { display: none; }
 .barra span { display: block; height: 100%; background: linear-gradient(90deg, #16a34a, #4ade80); }
 .barra.baixo span { background: linear-gradient(90deg, #b91c1c, #f87171); }
 
-/* MODAIS, TOASTS E POP-UP GLOBAL EM TEMPO REAL */
+/* MODAIS E TOASTS */
 .toasts {
     position: fixed; top: 18px; right: 18px; z-index: 9999;
     display: flex; flex-direction: column; gap: 10px; max-width: 390px;
@@ -1250,73 +1193,6 @@ tr.sem-resultado { display: none; }
 .modal p { margin: 0 0 16px; overflow-wrap: break-word; }
 .modal .campo { margin-top: 14px; }
 .modal-acoes { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; flex-wrap: wrap; }
-
-/* POP-UP DE ENVIO E ALERTA ENTRE DISPOSITIVOS */
-.popup-sucesso-overlay { z-index: 9800; animation: fadeIn .25s ease-out; }
-.popup-sucesso-box {
-    max-width: 490px;
-    text-align: center;
-    border: 2px solid var(--ok);
-    box-shadow: 0 28px 75px rgba(0, 0, 0, 0.9), 0 0 40px rgba(34, 197, 94, 0.22);
-    animation: popScale .32s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-.popup-sucesso-box.alerta-remoto {
-    border-color: var(--or);
-    box-shadow: 0 28px 75px rgba(0, 0, 0, 0.92), 0 0 45px rgba(249, 115, 22, 0.35);
-}
-.popup-check-icon {
-    width: 66px; height: 66px; border-radius: 50%;
-    background: rgba(34, 197, 94, 0.16);
-    border: 2px solid var(--ok);
-    color: #4ade80; font-size: 32px;
-    display: flex; align-items: center; justify-content: center;
-    margin: 0 auto 14px;
-    box-shadow: 0 0 22px rgba(34, 197, 94, 0.3);
-}
-.popup-sucesso-box.alerta-remoto .popup-check-icon {
-    background: rgba(249, 115, 22, 0.18);
-    border-color: var(--or);
-    color: var(--or2);
-    box-shadow: 0 0 24px rgba(249, 115, 22, 0.38);
-}
-.popup-codigo-badge {
-    display: inline-block;
-    background: rgba(249, 115, 22, 0.16);
-    border: 1px solid rgba(249, 115, 22, 0.5);
-    color: var(--or2);
-    font-size: 18px;
-    font-weight: 800;
-    padding: 7px 18px;
-    border-radius: 10px;
-    margin-bottom: 14px;
-    letter-spacing: 0.5px;
-}
-.popup-resumo-lista {
-    background: #0c0e12;
-    border: 1px solid var(--bd);
-    border-radius: 12px;
-    padding: 14px 16px;
-    text-align: left;
-    margin: 12px 0 18px;
-    display: grid;
-    gap: 8px;
-    font-size: 13.5px;
-}
-.popup-resumo-item {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    border-bottom: 1px solid #1a1e28;
-    padding-bottom: 6px;
-}
-.popup-resumo-item:last-child { border-bottom: none; padding-bottom: 0; }
-.popup-resumo-item span { color: var(--mt); font-weight: 600; flex-shrink: 0; }
-.popup-resumo-item strong { color: var(--tx); text-align: right; word-break: break-word; }
-
-@keyframes popScale {
-    from { opacity: 0; transform: scale(0.85) translateY(12px); }
-    to { opacity: 1; transform: scale(1) translateY(0); }
-}
 
 .stepper { display: flex; gap: 8px; }
 .stepper button { width: 44px; padding: 0; font-size: 20px; background: #262a36; flex-shrink: 0; }
@@ -1477,204 +1353,6 @@ window.toast=function(msg,tipo){
     setTimeout(()=>t.remove(),5000);
 };
 (window.__FLASH__||[]).forEach((m,i)=>setTimeout(()=>window.toast(m,/erro|não|nao|inválid|insuficiente|incorret|obrigat/i.test(m)?'erro':'ok'),i*220));
-
-// ============================================================================
-// ALERTA SONORO VIA WEB AUDIO API (SEM ARQUIVOS EXTERNOS)
-// ============================================================================
-let somAtivo = localStorage.getItem('jamaica_som_ativo') !== '0';
-
-window.tocarAlertaSonoro = function() {
-    if (!somAtivo) return;
-    try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
-        const tocarNota = (freq, inicio, duracao) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, ctx.currentTime + inicio);
-            gain.gain.setValueAtTime(0.001, ctx.currentTime + inicio);
-            gain.gain.exponentialRampToValueAtTime(0.28, ctx.currentTime + inicio + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + inicio + duracao);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(ctx.currentTime + inicio);
-            osc.stop(ctx.currentTime + inicio + duracao);
-        };
-        tocarNota(660, 0, 0.16);
-        tocarNota(880, 0.18, 0.24);
-    } catch (e) {}
-};
-
-window.addEventListener('DOMContentLoaded', () => {
-    const btnSom = document.getElementById('btnToggleSom');
-    if (btnSom) {
-        const atualizarRotuloSom = () => {
-            btnSom.textContent = somAtivo ? '🔔 Som: Ativo' : '🔕 Som: Mudo';
-            btnSom.style.borderColor = somAtivo ? 'rgba(34, 197, 94, 0.5)' : 'rgba(255, 255, 255, 0.18)';
-        };
-        atualizarRotuloSom();
-        btnSom.addEventListener('click', () => {
-            somAtivo = !somAtivo;
-            localStorage.setItem('jamaica_som_ativo', somAtivo ? '1' : '0');
-            atualizarRotuloSom();
-            if (somAtivo) {
-                window.tocarAlertaSonoro();
-                window.toast('Alerta sonoro ativado neste dispositivo!', 'ok');
-            } else {
-                window.toast('Alerta sonoro silenciado neste dispositivo.', 'ok');
-            }
-        });
-    }
-});
-
-// ============================================================================
-// POP-UP MODAL DE CONFIRMAÇÃO E ALERTA EM TEMPO REAL ENTRE DISPOSITIVOS
-// ============================================================================
-window.exibirPopupConfirmacao = function(dados, remoto) {
-    if (!dados) return;
-    document.querySelectorAll('.popup-sucesso-overlay').forEach(el => el.remove());
-
-    const ov = document.createElement('div');
-    ov.className = 'overlay aberto popup-sucesso-overlay';
-
-    const box = document.createElement('div');
-    box.className = 'modal popup-sucesso-box' + (remoto ? ' alerta-remoto' : '');
-
-    const icon = document.createElement('div');
-    icon.className = 'popup-check-icon';
-    icon.textContent = remoto ? '🔔' : '✔';
-
-    const titulo = document.createElement('h3');
-    titulo.style.color = remoto ? '#fb923c' : '#4ade80';
-    titulo.style.fontSize = '21px';
-    titulo.textContent = dados.titulo || 'Solicitação Enviada!';
-
-    const subtitulo = document.createElement('p');
-    subtitulo.className = 'muted';
-    subtitulo.style.marginBottom = '12px';
-    subtitulo.textContent = dados.subtitulo || 'Registro salvo e notificado com sucesso no sistema.';
-
-    const badge = document.createElement('div');
-    badge.className = 'popup-codigo-badge';
-    badge.textContent = dados.codigo || '';
-
-    const lista = document.createElement('div');
-    lista.className = 'popup-resumo-lista';
-
-    (dados.detalhes || []).forEach(item => {
-        const row = document.createElement('div');
-        row.className = 'popup-resumo-item';
-        const lbl = document.createElement('span');
-        lbl.textContent = item.label + ':';
-        const val = document.createElement('strong');
-        val.textContent = item.valor || '-';
-        row.append(lbl, val);
-        lista.appendChild(row);
-    });
-
-    const acoes = document.createElement('div');
-    acoes.className = 'modal-acoes';
-    acoes.style.justifyContent = 'center';
-
-    if (dados.url_imprimir) {
-        const btnImp = document.createElement('a');
-        btnImp.href = dados.url_imprimir;
-        btnImp.target = '_blank';
-        btnImp.className = 'botao imprimir';
-        btnImp.textContent = '🖨️ Imprimir Comprovante';
-        acoes.appendChild(btnImp);
-    }
-
-    const btnOk = document.createElement('button');
-    btnOk.type = 'button';
-    btnOk.className = 'salvar';
-    btnOk.style.minWidth = '150px';
-    btnOk.textContent = remoto ? 'Visualizar e Atualizar' : 'OK, Entendi';
-
-    const fechar = () => {
-        ov.remove();
-        if (remoto && dados.recarregar) {
-            window.location.reload();
-        }
-    };
-    btnOk.onclick = fechar;
-    ov.onclick = e => { if (e.target === ov) fechar(); };
-    document.addEventListener('keydown', function esc(e) {
-        if (e.key === 'Escape') {
-            document.removeEventListener('keydown', esc);
-            fechar();
-        }
-    });
-
-    acoes.appendChild(btnOk);
-    box.append(icon, titulo, subtitulo);
-    if (dados.codigo) box.appendChild(badge);
-    if ((dados.detalhes || []).length) box.appendChild(lista);
-    box.appendChild(acoes);
-    ov.appendChild(box);
-    document.body.appendChild(ov);
-    setTimeout(() => btnOk.focus(), 50);
-
-    if (remoto) {
-        window.tocarAlertaSonoro();
-    }
-};
-
-if (window.__POPUP__) {
-    if (window.__POPUP__.tipo === 'os' && window.__POPUP__.id) {
-        localStorage.setItem('jamaica_ultimo_os_id', String(window.__POPUP__.id));
-    } else if (window.__POPUP__.tipo === 'sc' && window.__POPUP__.id) {
-        localStorage.setItem('jamaica_ultimo_sc_id', String(window.__POPUP__.id));
-    }
-    window.addEventListener('DOMContentLoaded', () => {
-        window.exibirPopupConfirmacao(window.__POPUP__, false);
-    });
-}
-
-// ============================================================================
-// MONITORAMENTO EM TEMPO REAL (POLLING A CADA 5 SEGUNDOS PARA OUTROS APARELHOS)
-// ============================================================================
-function iniciarMonitoramentoTempoReal() {
-    if (window.location.pathname === '/login') return;
-
-    const verificarNovidades = async () => {
-        if (document.hidden) return;
-        try {
-            const resp = await fetch('/api/ultimos-eventos', { cache: 'no-store' });
-            if (!resp.ok) return;
-            const data = await resp.json();
-
-            if (data.os && data.os.id) {
-                const salvoOs = localStorage.getItem('jamaica_ultimo_os_id');
-                if (salvoOs === null) {
-                    localStorage.setItem('jamaica_ultimo_os_id', String(data.os.id));
-                } else if (data.os.id > parseInt(salvoOs, 10)) {
-                    localStorage.setItem('jamaica_ultimo_os_id', String(data.os.id));
-                    window.exibirPopupConfirmacao(data.os, true);
-                }
-            }
-
-            if (data.sc && data.sc.id) {
-                const salvoSc = localStorage.getItem('jamaica_ultimo_sc_id');
-                if (salvoSc === null) {
-                    localStorage.setItem('jamaica_ultimo_sc_id', String(data.sc.id));
-                } else if (data.sc.id > parseInt(salvoSc, 10)) {
-                    localStorage.setItem('jamaica_ultimo_sc_id', String(data.sc.id));
-                    window.exibirPopupConfirmacao(data.sc, true);
-                }
-            }
-        } catch (err) {}
-    };
-
-    verificarNovidades();
-    setInterval(verificarNovidades, 5000);
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) verificarNovidades();
-    });
-}
-window.addEventListener('DOMContentLoaded', iniciarMonitoramentoTempoReal);
 
 window.confirmar=function(msg,rotulo,perigo){
     return new Promise(resolve=>{
@@ -1949,7 +1627,6 @@ HTML_OS = r"""
         <div class="nav-abas">
             <a href="{{url_for('dashboard')}}" class="aba ativa">📋 Ordens de Serviço (Início)</a>
             <a href="{{url_for('central_gestao')}}" class="aba" style="border-color:var(--or2);color:#fed7aa">🔐 Central de Gestão (Estoque, PCM, Compras & Indicadores)</a>
-            <button type="button" id="btnToggleSom" class="aba" title="Ativar ou silenciar alerta sonoro de novas O.S.">🔔 Som: Ativo</button>
             <button type="button" id="btnInstalarApp" class="aba" style="display:inline-flex;background:var(--btn);border-color:var(--or);color:#fff">📲 Instalar App</button>
         </div>
     </div>
@@ -2190,7 +1867,6 @@ HTML_CENTRAL_GESTAO = r"""
         <div class="nav-abas">
             <a href="{{url_for('dashboard')}}" class="aba">📋 Ordens de Serviço (Início)</a>
             <a href="{{url_for('central_gestao')}}" class="aba ativa">🔐 Central de Gestão Unificada</a>
-            <button type="button" id="btnToggleSom" class="aba" title="Ativar ou silenciar alerta sonoro de novas O.S. e S.C.">🔔 Som: Ativo</button>
             <button type="button" id="btnInstalarApp" class="aba" style="display:inline-flex;background:var(--btn);border-color:var(--or);color:#fff">📲 Instalar App</button>
         </div>
     </div>
@@ -2580,8 +2256,25 @@ HTML_CENTRAL_GESTAO = r"""
         </td>
     </tr>
     <tr class="detalhe"><td colspan="9"><strong style="color:var(--or2)">Itens:</strong>
-        <table style="margin-top:8px;background:#14171f"><thead><tr><th>#</th><th>Descritivo</th><th>Qtd</th><th>Unid</th><th>Ref</th></tr></thead><tbody>
-        {% for it in sc.itens %}<tr><td>{{loop.index}}</td><td><strong>{{it.descritivo}}</strong></td><td>{{it.quantidade}}</td><td>{{it.unidade}}</td><td>{{it.link_referencia or '-'}}</td></tr>{% endfor %}
+        <table style="margin-top:8px;background:#14171f"><thead><tr><th>#</th><th>Descritivo</th><th>Qtd</th><th>Unid</th><th>Ref / Link</th></tr></thead><tbody>
+        {% for it in sc.itens %}
+        {% set ref = (it.link_referencia or '')|trim %}
+        <tr>
+            <td>{{loop.index}}</td>
+            <td><strong>{{it.descritivo}}</strong></td>
+            <td>{{it.quantidade}}</td>
+            <td>{{it.unidade}}</td>
+            <td>
+                {% if ref.startswith('http://') or ref.startswith('https://') %}
+                    <a href="{{ref}}" target="_blank" rel="noopener noreferrer" class="botao imprimir" style="padding:5px 10px;font-size:11.5px" title="{{ref}}">🔗 Abrir Link</a>
+                {% elif ref.startswith('www.') %}
+                    <a href="https://{{ref}}" target="_blank" rel="noopener noreferrer" class="botao imprimir" style="padding:5px 10px;font-size:11.5px" title="https://{{ref}}">🔗 Abrir Link</a>
+                {% else %}
+                    {{ref or '-'}}
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
         </tbody></table>
     </td></tr>
     {% else %}
@@ -2934,6 +2627,7 @@ td,th{border:1px solid #444;padding:8px;text-align:left;vertical-align:top}
 th{background:#eee}
 .assinaturas{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:45px;text-align:center}
 .assinaturas div{border-top:1px solid #111;padding-top:6px;font-size:12px}
+.btn-link-print{display:inline-block;padding:4px 9px;background:#1d4ed8;color:#fff;text-decoration:none;border-radius:4px;font-size:11.5px;font-weight:bold}
 @media print{.no-print{display:none}body{margin:0}}
 </style></head><body>
 <div class="no-print" style="max-width:820px;margin:0 auto 14mm;text-align:right">
@@ -2952,10 +2646,25 @@ th{background:#eee}
         <tr><th>Dúvidas Técnicas</th><td colspan="3">{{sc.responsaveis_duvidas or '-'}}</td></tr>
     </table>
     <table>
-        <thead><tr><th style="width:6%">#</th><th>Descritivo Técnico do Material / Peça</th><th style="width:10%">Qtd</th><th style="width:10%">Unid.</th><th style="width:24%">Referência / Link</th></tr></thead>
+        <thead><tr><th style="width:6%">#</th><th>Descritivo Técnico do Material / Peça</th><th style="width:10%">Qtd</th><th style="width:10%">Unid.</th><th style="width:18%">Referência / Link</th></tr></thead>
         <tbody>
         {% for it in sc.itens %}
-        <tr><td>{{loop.index}}</td><td>{{it.descritivo}}</td><td>{{it.quantidade}}</td><td>{{it.unidade}}</td><td style="word-break:break-all">{{it.link_referencia or '-'}}</td></tr>
+        {% set ref = (it.link_referencia or '')|trim %}
+        <tr>
+            <td>{{loop.index}}</td>
+            <td>{{it.descritivo}}</td>
+            <td>{{it.quantidade}}</td>
+            <td>{{it.unidade}}</td>
+            <td>
+                {% if ref.startswith('http://') or ref.startswith('https://') %}
+                    <a href="{{ref}}" target="_blank" rel="noopener noreferrer" class="btn-link-print" title="{{ref}}">🔗 Abrir Link</a>
+                {% elif ref.startswith('www.') %}
+                    <a href="https://{{ref}}" target="_blank" rel="noopener noreferrer" class="btn-link-print" title="https://{{ref}}">🔗 Abrir Link</a>
+                {% else %}
+                    {{ref or '-'}}
+                {% endif %}
+            </td>
+        </tr>
         {% endfor %}
         </tbody>
     </table>
@@ -3161,21 +2870,7 @@ def criar():
                 "Criação O.S.",
                 f"O.S. {nova.numero_os} criada para {nova.setor or 'Geral'}",
             )
-            session["popup_confirmacao"] = {
-                "tipo": "os",
-                "id": nova.id,
-                "titulo": "Ordem de Serviço Registrada!",
-                "subtitulo": "Sua solicitação já está na fila da equipe de manutenção.",
-                "codigo": f"O.S. Nº {nova.numero_os}",
-                "url_imprimir": url_for("imprimir_os", id=nova.id),
-                "detalhes": [
-                    {"label": "Solicitante", "valor": nova.solicitante},
-                    {"label": "Máquina / Equip.", "valor": nova.setor or "Não informado"},
-                    {"label": "Causa / Sintoma", "valor": nova.titulo or "Não informado"},
-                    {"label": "Prioridade", "valor": nova.prioridade},
-                    {"label": "Data / Hora", "valor": nova.abertura},
-                ],
-            }
+        flash(f"O.S. {nova.numero_os} registrada com sucesso!")
     except Exception:
         db.session.rollback()
         flash("Não foi possível criar a O.S.")
@@ -4057,7 +3752,6 @@ def cadastrar_compras():
             )
             db.session.add(sc)
             db.session.flush()
-            qtd_itens_validos = 0
             for d, q, u, l in zip(
                 descritivos,
                 request.form.getlist("quantidade[]"),
@@ -4065,7 +3759,6 @@ def cadastrar_compras():
                 request.form.getlist("link_referencia[]"),
             ):
                 if d.strip():
-                    qtd_itens_validos += 1
                     db.session.add(
                         ItemSolicitacaoCompra(
                             solicitacao_id=sc.id,
@@ -4079,25 +3772,11 @@ def cadastrar_compras():
             registrar_auditoria(
                 "Compras", "Nova S.C.", f"S.C. {sc.numero_sc} registrada ({obj})"
             )
-            session["popup_confirmacao"] = {
-                "tipo": "sc",
-                "id": sc.id,
-                "titulo": "Solicitação de Compra Enviada!",
-                "subtitulo": "Pedido registrado e encaminhado para aprovação de suprimentos.",
-                "codigo": sc.numero_sc,
-                "url_imprimir": url_for("imprimir_sc", id=sc.id),
-                "detalhes": [
-                    {"label": "Classificação", "valor": sc.tipo_sc},
-                    {"label": "Solicitante", "valor": f"{sc.solicitante} ({sc.setor_solicitante})"},
-                    {"label": "Centro de Custo", "valor": sc.centro_custo or "-"},
-                    {"label": "Objeto / Finalidade", "valor": sc.objeto_solicitacao},
-                    {"label": "Itens Incluídos", "valor": f"{qtd_itens_validos} item(ns)"},
-                ],
-            }
+        flash("Solicitação de Compra registrada!")
     except Exception:
         db.session.rollback()
         flash("Erro ao registrar S.C.")
-    return redirect(url_for("central_gestao", tab="compras"))
+    return redirect(url_for("central_gestao"))
 
 
 @app.route("/compras/atualizar-status/<int:id>", methods=["POST"])
