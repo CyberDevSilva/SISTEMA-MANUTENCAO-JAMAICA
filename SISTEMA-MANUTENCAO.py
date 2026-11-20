@@ -648,12 +648,52 @@ def adicionar_headers_seguranca(response):
 
 
 def parse_data_br(texto):
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+    if texto is None or (isinstance(texto, float) and pd.isna(texto)):
+        return None
+    if isinstance(texto, datetime):
+        return texto.date()
+    if isinstance(texto, date):
+        return texto
+    s = str(texto).strip()
+    if not s:
+        return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S"):
         try:
-            return datetime.strptime((texto or "").strip(), fmt).date()
+            return datetime.strptime(s[:19], fmt[: len(s[:19])]).date()
         except ValueError:
             continue
+    try:
+        dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if pd.notna(dt):
+            return dt.date()
+    except Exception:
+        pass
     return None
+
+
+def normalizar_frequencia_pcm(valor):
+    texto = str(valor or "").strip().lower()
+    if not texto:
+        return "Mensal"
+    for freq in FREQUENCIA_PCM:
+        if texto == freq.lower() or texto.startswith(freq.lower()[:5]):
+            return freq
+    mapa = {
+        "7d": "Semanal",
+        "7 dias": "Semanal",
+        "15d": "Quinzenal",
+        "15 dias": "Quinzenal",
+        "30d": "Mensal",
+        "30 dias": "Mensal",
+        "60d": "Bimestral",
+        "90d": "Trimestral",
+        "180d": "Semestral",
+        "365d": "Anual",
+    }
+    for chave, freq in mapa.items():
+        if chave in texto:
+            return freq
+    return "Mensal"
 
 
 def somar_meses(data, meses):
@@ -1019,6 +1059,12 @@ input, textarea, select {
     border: 1px solid var(--bd); border-radius: 10px;
     font: inherit; font-size: 13.5px; background: #0c0e12; color: var(--tx);
     transition: border-color .2s, box-shadow .2s;
+}
+input[type="file"] {
+    padding: 8px 10px;
+    background: #0c0e12;
+    color: #d1d5db;
+    cursor: pointer;
 }
 input:focus, textarea:focus, select:focus {
     outline: none; border-color: var(--or);
@@ -2112,6 +2158,24 @@ HTML_CENTRAL_GESTAO = r"""
         <div class="campo completo"><label>Roteiro / Check-list Preventivo *</label><textarea name="atividade" data-max="2000" required placeholder="Pontos de inspeção, lubrificação..."></textarea></div>
         <div class="campo completo"><button class="salvar" type="submit">+ Salvar Plano Preventivo</button></div>
     </div></form></div></details>
+
+    <section class="card">
+        <h2>📥 Importar Planilha Excel de PCM</h2>
+        <p class="muted" style="margin-top:0;margin-bottom:14px">
+            Envie um arquivo <strong>.xlsx</strong> ou <strong>.xls</strong> para cadastrar planos preventivos em lote.
+        </p>
+        <form action="{{url_for('importar_excel_pcm')}}" method="POST" enctype="multipart/form-data">
+            <div class="form-grid" style="align-items:end">
+                <div class="campo">
+                    <label>Selecionar Arquivo Excel (.xlsx / .xls) *</label>
+                    <input type="file" name="arquivo_excel" accept=".xlsx,.xls" required>
+                </div>
+                <div class="campo" style="display:flex;gap:10px;flex-wrap:wrap">
+                    <button type="submit" class="salvar">⬆ Importar Planilha PCM</button>
+                </div>
+            </div>
+        </form>
+    </section>
 
     <section class="card">
         <div class="acoes-topo">
@@ -3693,6 +3757,136 @@ def excluir_plano_pcm(id):
         registrar_auditoria("PCM", "Exclusão Plano", f"Plano preventivo excluído ({maq})")
         flash("Plano excluído!")
     return redirect(url_for("central_gestao"))
+
+
+@app.route("/pcm/importar-excel", methods=["POST"])
+@requer_login
+def importar_excel_pcm():
+    arquivo = request.files.get("arquivo_excel")
+    if not arquivo or not arquivo.filename:
+        flash("Selecione um arquivo Excel (.xlsx ou .xls) para importar.")
+        return redirect(url_for("central_gestao", tab="pcm"))
+
+    nome_arq = arquivo.filename.lower()
+    if not nome_arq.endswith((".xlsx", ".xls")):
+        flash("Formato inválido. Envie apenas arquivos .xlsx ou .xls.")
+        return redirect(url_for("central_gestao", tab="pcm"))
+
+    try:
+        engine = "openpyxl" if nome_arq.endswith(".xlsx") else "xlrd"
+        df = pd.read_excel(BytesIO(arquivo.read()), engine=engine)
+    except Exception as e:
+        flash(f"Erro ao ler a planilha Excel: {e}")
+        return redirect(url_for("central_gestao", tab="pcm"))
+
+    if df is None or df.empty:
+        flash("A planilha enviada está vazia.")
+        return redirect(url_for("central_gestao", tab="pcm"))
+
+    def norm_col(c):
+        s = str(c or "").strip().lower()
+        s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+        return s
+
+    col_map = {norm_col(c): c for c in df.columns}
+
+    def pegar_valor(linha, candidatas):
+        for cand in candidatas:
+            chave = norm_col(cand)
+            if chave in col_map:
+                val = linha[col_map[chave]]
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    texto = str(val).strip()
+                    if texto and texto.lower() != "nan":
+                        return val
+        return None
+
+    importados = 0
+    ignorados = 0
+
+    try:
+        for _, linha in df.iterrows():
+            maq_raw = pegar_valor(
+                linha,
+                ["maquina", "máquina", "maquina_equipamento", "equipamento", "ativo"],
+            )
+            ativ_raw = pegar_valor(
+                linha,
+                [
+                    "atividade",
+                    "roteiro",
+                    "roteiro_check_list_preventivo",
+                    "check_list",
+                    "checklist",
+                    "descricao",
+                ],
+            )
+            maquina = str(maq_raw).strip() if maq_raw is not None else ""
+            atividade = str(ativ_raw).strip() if ativ_raw is not None else ""
+
+            if not maquina or not atividade:
+                ignorados += 1
+                continue
+
+            tag_raw = pegar_valor(
+                linha, ["tag", "codigo", "tag_codigo", "codigo_maquina"]
+            )
+            setor_raw = pegar_valor(linha, ["setor", "area", "área", "centro_custo"])
+            freq_raw = pegar_valor(
+                linha, ["frequencia", "frequência", "periodicidade", "ciclo"]
+            )
+            resp_raw = pegar_valor(
+                linha, ["responsavel", "responsável", "resp", "equipe"]
+            )
+            data_raw = pegar_valor(
+                linha,
+                [
+                    "proxima_execucao",
+                    "próxima_execução",
+                    "proxima",
+                    "data_programada",
+                    "data",
+                    "prox_exec",
+                ],
+            )
+
+            data_obj = parse_data_br(data_raw) or date.today()
+            db.session.add(
+                PlanoPreventivo(
+                    maquina=maquina[:150],
+                    codigo_maquina=str(tag_raw or "").strip().upper()[:50],
+                    setor=str(setor_raw or "").strip()[:100],
+                    atividade=atividade[:2000],
+                    frequencia=normalizar_frequencia_pcm(freq_raw),
+                    responsavel=str(resp_raw or "").strip()[:100],
+                    proxima_execucao=data_obj.strftime("%d/%m/%Y"),
+                )
+            )
+            importados += 1
+
+        if importados == 0:
+            db.session.rollback()
+            flash(
+                "Nenhum plano válido encontrado. Verifique se as colunas de Máquina e"
+                " Atividade/Roteiro estão preenchidas."
+            )
+            return redirect(url_for("central_gestao", tab="pcm"))
+
+        db.session.commit()
+        registrar_auditoria(
+            "PCM",
+            "Importação Excel PCM",
+            f"{importados} plano(s) importado(s) de '{arquivo.filename}' ({ignorados} ignorado(s)).",
+        )
+        msg = f"{importados} plano(s) preventivo(s) importado(s) com sucesso!"
+        if ignorados:
+            msg += f" ({ignorados} linha(s) sem máquina ou roteiro ignorada(s))."
+        flash(msg)
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao salvar os planos importados no banco de dados.")
+
+    return redirect(url_for("central_gestao", tab="pcm"))
 
 
 @app.route("/pcm/excel")
