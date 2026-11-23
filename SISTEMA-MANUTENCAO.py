@@ -1274,7 +1274,7 @@ tr.sem-resultado { display: none; }
 .barra span { display: block; height: 100%; background: linear-gradient(90deg, #16a34a, #4ade80); }
 .barra.baixo span { background: linear-gradient(90deg, #b91c1c, #f87171); }
 
-/* MODAIS E TOASTS */
+/* MODAIS, POP-UP AO VIVO E TOASTS */
 .toasts {
     position: fixed; top: 18px; right: 18px; z-index: 9999;
     display: flex; flex-direction: column; gap: 10px; max-width: 390px;
@@ -1296,6 +1296,36 @@ tr.sem-resultado { display: none; }
     align-items: center; justify-content: center; padding: 16px;
 }
 .overlay.aberto { display: flex; }
+.overlay-alerta-os {
+    display: none; position: fixed; inset: 0; z-index: 9800;
+    background: rgba(0, 0, 0, 0.74); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center; padding: 16px;
+}
+.overlay-alerta-os.aberto { display: flex; animation: fadeIn .2s ease-out; }
+.modal-alerta-os {
+    width: 100%; max-width: 520px;
+    background: linear-gradient(175deg, #221712, #111318);
+    border: 2px solid var(--or);
+    border-radius: 16px; padding: 24px;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.9), 0 0 38px rgba(249, 115, 22, 0.35);
+}
+.alerta-os-topo {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 12px;
+}
+.alerta-os-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 99px; font-size: 12px; font-weight: 800;
+    background: rgba(249, 115, 22, 0.22); color: #fed7aa; border: 1px solid var(--or);
+}
+.alerta-os-grade {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+    background: #0c0e12; border: 1px solid var(--bd); border-radius: 12px;
+    padding: 14px; margin: 12px 0 16px;
+}
+.alerta-os-item strong { display: block; font-size: 11px; text-transform: uppercase; color: var(--mt); letter-spacing: .5px; }
+.alerta-os-item span { font-size: 13.5px; font-weight: 700; color: var(--tx); overflow-wrap: break-word; }
+.alerta-os-item.full { grid-column: 1 / -1; }
 .modal {
     width: 100%; max-width: 640px; max-height: 92vh; overflow-y: auto;
     background: linear-gradient(175deg, #1b1f29, #101217);
@@ -1411,10 +1441,11 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     .acoes button, .acoes .botao { padding: 7px 10px; font-size: 11.5px; }
     tr.detalhe td { padding: 14px; font-size: 13px; line-height: 1.5; }
 
-    .modal { padding: 18px; border-radius: 14px; max-height: 90vh; }
+    .modal, .modal-alerta-os { padding: 18px; border-radius: 14px; max-height: 90vh; overflow-y: auto; }
     .modal h3 { font-size: 17.5px; line-height: 1.3; }
     .modal-acoes { flex-direction: column-reverse; }
     .modal-acoes button, .modal-acoes .botao { width: 100%; }
+    .alerta-os-grade { grid-template-columns: 1fr; }
 
     .form-grid, .form-grid.tres, .checkbox-grid, .grid-duplo, .grid-triplo { grid-template-columns: 1fr; gap: 12px; }
     .campo.completo { grid-column: auto; }
@@ -1470,6 +1501,181 @@ window.toast=function(msg,tipo){
     setTimeout(()=>t.remove(),5000);
 };
 (window.__FLASH__||[]).forEach((m,i)=>setTimeout(()=>window.toast(m,/erro|não|nao|inválid|insuficiente|incorret|obrigat/i.test(m)?'erro':'ok'),i*220));
+
+/* ============================================================================
+   SOM DE NOTIFICAÇÃO E POP-UP AO VIVO DE NOVA O.S. EM TODOS OS DISPOSITIVOS
+   ============================================================================ */
+let audioCtx = null;
+function desbloquearAudio(){
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!audioCtx) audioCtx = new Ctx();
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(()=>{});
+        }
+    } catch(_e){}
+}
+['click', 'keydown', 'touchstart'].forEach(ev => {
+    document.addEventListener(ev, desbloquearAudio, { passive: true });
+});
+
+window.tocarSomNotificacaoOS = function(){
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!audioCtx) audioCtx = new Ctx();
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(()=>{});
+        }
+        const agora = audioCtx.currentTime;
+        const notas = [
+            { freq: 880, inicio: 0.00, duracao: 0.14 },
+            { freq: 1174.66, inicio: 0.16, duracao: 0.22 }
+        ];
+        notas.forEach(n => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(n.freq, agora + n.inicio);
+            gain.gain.setValueAtTime(0.0001, agora + n.inicio);
+            gain.gain.exponentialRampToValueAtTime(0.24, agora + n.inicio + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, agora + n.inicio + n.duracao);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(agora + n.inicio);
+            osc.stop(agora + n.inicio + n.duracao + 0.02);
+        });
+    } catch(_e){}
+};
+
+const ovAlertaOS = document.createElement('div');
+ovAlertaOS.className = 'overlay-alerta-os';
+ovAlertaOS.id = 'overlayAlertaNovaOS';
+ovAlertaOS.innerHTML = `
+    <div class="modal-alerta-os" role="dialog" aria-modal="true" aria-labelledby="alertaOSTitulo">
+        <div class="alerta-os-topo">
+            <span class="alerta-os-tag">🔔 NOVA O.S. REGISTRADA</span>
+            <button type="button" class="limpar" id="btnFecharAlertaOS" style="padding:6px 12px;font-size:12px">✕ Fechar</button>
+        </div>
+        <h3 id="alertaOSTitulo" style="margin:0 0 4px;font-size:20px;color:#fb923c">Ordem de Serviço #<span id="alertaOSNumero"></span></h3>
+        <p class="muted" style="margin:0">Registrada em <strong style="color:#f3f4f6" id="alertaOSAbertura"></strong></p>
+        <div class="alerta-os-grade">
+            <div class="alerta-os-item"><strong>Máquina / Equipamento</strong><span id="alertaOSSetor">-</span></div>
+            <div class="alerta-os-item"><strong>Prioridade</strong><span id="alertaOSPrioridade">-</span></div>
+            <div class="alerta-os-item"><strong>Solicitante</strong><span id="alertaOSSolicitante">-</span></div>
+            <div class="alerta-os-item"><strong>Setor / Local</strong><span id="alertaOSResponsavel">-</span></div>
+            <div class="alerta-os-item full"><strong>Causa / Sintoma</strong><span id="alertaOSTituloCausa">-</span></div>
+            <div class="alerta-os-item full" id="alertaOSDescBox" style="display:none"><strong>Descrição</strong><span id="alertaOSDescricao" style="font-weight:500;color:#d1d5db;white-space:pre-wrap"></span></div>
+        </div>
+        <div class="modal-acoes" style="margin-top:12px">
+            <button type="button" class="limpar" id="btnOkAlertaOS">Entendido</button>
+            <a href="/os" class="botao salvar" id="btnVerNaFilaOS">📋 Ver na Fila de O.S.</a>
+        </div>
+    </div>
+`;
+document.body.appendChild(ovAlertaOS);
+
+const filaAlertasOS = [];
+let alertaOSAtivo = false;
+
+function fecharAlertaOSAtual(){
+    ovAlertaOS.classList.remove('aberto');
+    alertaOSAtivo = false;
+    if (filaAlertasOS.length > 0) {
+        setTimeout(exibirProximoAlertaOS, 220);
+    }
+}
+
+function exibirProximoAlertaOS(){
+    if (alertaOSAtivo || filaAlertasOS.length === 0) return;
+    const os = filaAlertasOS.shift();
+    alertaOSAtivo = true;
+
+    $('#alertaOSNumero').textContent = os.numero_os || '';
+    $('#alertaOSAbertura').textContent = os.abertura || '';
+    $('#alertaOSSetor').textContent = os.setor || 'Não informado';
+    $('#alertaOSPrioridade').textContent = os.prioridade || 'Média';
+    $('#alertaOSSolicitante').textContent = os.solicitante || '-';
+    $('#alertaOSResponsavel').textContent = os.responsavel || '-';
+    $('#alertaOSTituloCausa').textContent = os.titulo || 'Sem causa informada';
+
+    const descBox = $('#alertaOSDescBox');
+    const descEl = $('#alertaOSDescricao');
+    if (os.descricao && os.descricao.trim()) {
+        descEl.textContent = os.descricao.trim();
+        descBox.style.display = '';
+    } else {
+        descEl.textContent = '';
+        descBox.style.display = 'none';
+    }
+
+    const btnVer = $('#btnVerNaFilaOS');
+    btnVer.href = '/os?busca=' + encodeURIComponent(os.numero_os || '');
+
+    ovAlertaOS.classList.add('aberto');
+    window.tocarSomNotificacaoOS();
+}
+
+$('#btnFecharAlertaOS')?.addEventListener('click', fecharAlertaOSAtual);
+$('#btnOkAlertaOS')?.addEventListener('click', fecharAlertaOSAtual);
+ovAlertaOS.addEventListener('mousedown', e => {
+    if (e.target === ovAlertaOS) fecharAlertaOSAtual();
+});
+
+window.dispararPopupNovaOS = function(os){
+    if (!os || !os.id) return;
+    filaAlertasOS.push(os);
+    exibirProximoAlertaOS();
+};
+
+const CHAVE_ULTIMO_OS = 'jamaica_ultimo_os_id_visto';
+function lerUltimoIdVisto(){
+    const v = parseInt(localStorage.getItem(CHAVE_ULTIMO_OS) || '0', 10);
+    return isNaN(v) ? 0 : v;
+}
+function salvarUltimoIdVisto(id){
+    const atual = lerUltimoIdVisto();
+    if (id > atual) {
+        localStorage.setItem(CHAVE_ULTIMO_OS, String(id));
+    }
+}
+
+function iniciarMonitoramentoNovaOS(){
+    if (typeof window.__ULTIMO_OS_ID__ === 'number' && window.__ULTIMO_OS_ID__ > 0) {
+        salvarUltimoIdVisto(window.__ULTIMO_OS_ID__);
+    }
+
+    async function verificarNovasOS(){
+        if (document.hidden) return;
+        const ultimoId = lerUltimoIdVisto();
+        try {
+            const resp = await fetch(`/api/os/novas?ultimo_id=${ultimoId}`, {
+                cache: 'no-store',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data || !Array.isArray(data.ordens)) return;
+            if (data.ordens.length > 0) {
+                let maiorId = ultimoId;
+                data.ordens.forEach(os => {
+                    if (os.id > maiorId) maiorId = os.id;
+                    if (os.id > ultimoId) {
+                        window.dispararPopupNovaOS(os);
+                    }
+                });
+                salvarUltimoIdVisto(maiorId);
+            }
+        } catch(_e){}
+    }
+
+    setInterval(verificarNovasOS, 3500);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) verificarNovasOS();
+    });
+}
+iniciarMonitoramentoNovaOS();
 
 window.confirmar=function(msg,rotulo,perigo){
     return new Promise(resolve=>{
@@ -1757,7 +1963,7 @@ HTML_LOBBY = r"""
     </div>
     <footer class="rodape">Central de Manutenção JAMAICA — Lobby de Acesso</footer>
 </div>
-<script>window.__FLASH__={{flash_msgs|tojson}};</script><script>{{js|safe}}</script></body></html>
+<script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
 """
 
 HTML_OS = r"""
@@ -1788,7 +1994,7 @@ HTML_OS = r"""
     <div class="resumo-card" data-atalho='[data-filtro="status"][data-valor="finalizada"]'><span class="icone">✅</span><span>O.S. Finalizadas</span><strong style="color:#4ade80">{{finalizadas}}</strong><small>Próxima O.S.: <b>{{proxima}}</b></small></div>
 </section>
 
-<details class="card" open><summary>➕ Abrir Nova Ordem de Serviço</summary><div class="conteudo"><form action="{{url_for('criar')}}" method="POST"><div class="form-grid">
+<details class="card" open><summary>➕ Abrir Nova Ordem de Serviço</summary><div class="conteudo"><form id="formCriarOS" action="{{url_for('criar')}}" method="POST"><div class="form-grid">
     <div class="campo"><label>Número da O.S.</label><input value="{{proxima}}" disabled></div>
     <div class="campo"><label>Solicitante *</label><input name="solicitante" maxlength="100" required placeholder="Nome do solicitante"></div>
     <div class="campo"><label>Máquina / Equipamento *</label><input name="setor" list="listaMaquinas" maxlength="100" value="{{prefill_setor}}" placeholder="Ex: Extrusora Troester 90/16">
@@ -1805,7 +2011,7 @@ HTML_OS = r"""
     </div>
     <div class="campo"><label>Setor</label><input name="responsavel" maxlength="100" placeholder="Local aonde há o problema"></div>
     <div class="campo completo"><label>Descrição Detalhada</label><textarea name="descricao" data-max="1000" placeholder="Descreva os detalhes técnicos do serviço solicitado..."></textarea></div>
-    <div class="campo completo"><button class="salvar" type="submit">+ Registrar Ordem de Serviço</button></div>
+    <div class="campo completo"><button class="salvar" type="submit" onclick="window.tocarSomNotificacaoOS && window.tocarSomNotificacaoOS()">+ Registrar Ordem de Serviço</button></div>
 </div></form></div></details>
 
 <section class="card" id="secao-tabela">
@@ -1992,11 +2198,11 @@ HTML_OS = r"""
         </form>
     </div>
 </div>
-<script>window.__FLASH__={{flash_msgs|tojson}};</script><script>{{js|safe}}</script></body></html>
+<script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
 """
 
 HTML_LOGIN_SISTEMA = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a><a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};</script><script>{{js|safe}}</script></body></html>
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a><a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
 """
 
 HTML_CENTRAL_GESTAO = r"""
@@ -2631,6 +2837,7 @@ HTML_CENTRAL_GESTAO = r"""
 
 <script>
 window.__FLASH__={{flash_msgs|tojson}};
+window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};
 const dadosTabela = {{ dados_tabela|tojson }};
 const totalGeralPrev = {{ total_preventiva }};
 const totalGeralCorr = {{ total_corretiva }};
@@ -2953,7 +3160,12 @@ def login_sistema():
             falhas, desde = 0, agora
         if falhas >= MAX_TENTATIVAS_LOGIN:
             flash("Muitas tentativas incorretas. Aguarde alguns minutos.")
-            return renderizar(HTML_LOGIN_SISTEMA)
+            return renderizar(
+                HTML_LOGIN_SISTEMA,
+                ultimo_os_id=(
+                    db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+                ),
+            )
         usuario = request.form.get("usuario", "").strip()
         senha = request.form.get("senha", "").strip()
         ok_u = hmac.compare_digest(usuario.encode(), SISTEMA_USUARIO.encode())
@@ -2967,7 +3179,8 @@ def login_sistema():
             return redirect(url_for("central_gestao"))
         tentativas_login[ip] = (falhas + 1, desde)
         flash("Usuário ou senha incorretos.")
-    return renderizar(HTML_LOGIN_SISTEMA)
+    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    return renderizar(HTML_LOGIN_SISTEMA, ultimo_os_id=ultimo_os_id)
 
 
 @app.route("/logout")
@@ -2980,6 +3193,42 @@ def logout_sistema():
 @app.route("/health")
 def healthcheck():
     return jsonify({"status": "ok", "timestamp": agora_formatado()}), 200
+
+
+@app.route("/api/os/novas")
+def api_os_novas():
+    try:
+        ultimo_id = max(0, int(request.args.get("ultimo_id", "0")))
+    except ValueError:
+        ultimo_id = 0
+
+    novas = (
+        OrdemServico.query.filter(OrdemServico.id > ultimo_id)
+        .order_by(OrdemServico.id.asc())
+        .limit(20)
+        .all()
+    )
+    ultimo_no_banco = (
+        db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    )
+    return jsonify({
+        "ultimo_id": ultimo_no_banco,
+        "ordens": [
+            {
+                "id": o.id,
+                "numero_os": o.numero_os,
+                "solicitante": o.solicitante,
+                "setor": o.setor or "",
+                "titulo": o.titulo or "",
+                "descricao": o.descricao or "",
+                "prioridade": o.prioridade or "Média",
+                "responsavel": o.responsavel or "",
+                "abertura": o.abertura or "",
+                "status": o.status or "Aberta",
+            }
+            for o in novas
+        ],
+    })
 
 
 @app.route("/governanca/backup")
@@ -3004,12 +3253,14 @@ def lobby():
     abertas = OrdemServico.query.filter_by(status="Aberta").count()
     aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
     total = OrdemServico.query.count()
+    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
     return renderizar(
         HTML_LOBBY,
         total=total,
         abertas=abertas,
         aguardando=aguardando,
         proxima=gerar_numero_os(),
+        ultimo_os_id=ultimo_os_id,
     )
 
 
@@ -3038,6 +3289,7 @@ def dashboard():
     aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
     finalizadas = OrdemServico.query.filter_by(status="Finalizada").count()
     total = OrdemServico.query.count()
+    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
     pecas_estoque = (
         ItemEstoque.query.filter(ItemEstoque.quantidade > 0)
         .order_by(ItemEstoque.nome.asc())
@@ -3056,6 +3308,7 @@ def dashboard():
         total=total,
         pct_final=round(finalizadas / total * 100) if total else 0,
         proxima=gerar_numero_os(),
+        ultimo_os_id=ultimo_os_id,
         busca=busca,
         prefill_setor=prefill_setor,
         maquinas_sugeridas=maquinas_sugeridas,
@@ -3295,6 +3548,7 @@ def excel():
 @app.route("/gestao")
 @requer_login
 def central_gestao():
+    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
     pecas = ItemEstoque.query.order_by(ItemEstoque.id.desc()).all()
     movimentacoes = (
         HistoricoMovimentacao.query.order_by(HistoricoMovimentacao.id.desc())
@@ -3546,6 +3800,7 @@ def central_gestao():
 
     return renderizar(
         HTML_CENTRAL_GESTAO,
+        ultimo_os_id=ultimo_os_id,
         pecas=pecas,
         movimentacoes=movimentacoes,
         total_pecas=total_pecas,
