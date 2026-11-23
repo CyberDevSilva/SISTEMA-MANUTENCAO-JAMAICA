@@ -604,6 +604,19 @@ def horas_decimais_para_hhmm(horas_float):
     return f"{h}h {m:02d}min"
 
 
+def formatar_duracao_indicador(horas_float):
+    if not horas_float or horas_float <= 0:
+        return "0h 00min"
+    if horas_float >= 24:
+        return f"{round(horas_float / 24, 1)} dias"
+    return horas_decimais_para_hhmm(horas_float)
+
+
+def normalizar_chave_maquina(nome):
+    texto = re.sub(r"\s+", " ", str(nome or "").strip()).lower()
+    return texto
+
+
 def token_csrf():
     if "csrf_token" not in session:
         session["csrf_token"] = secrets.token_hex(16)
@@ -2445,8 +2458,19 @@ HTML_CENTRAL_GESTAO = r"""
 <div id="secao-indicadores" class="painel-secao">
     <section class="resumo" style="margin-bottom:22px">
         <div class="resumo-card"><span class="icone">🛡️</span><span>Índice Preventivo</span><strong style="color:#60a5fa">{{pct_geral_prev}}%</strong><small>{{total_preventiva}} prev vs {{total_corretiva}} corr</small></div>
-        <div class="resumo-card"><span class="icone">⏱️</span><span>MTTR (Tempo Reparo)</span><strong style="color:#fb923c">{{mttr_str}}</strong><small>Média corretivas</small></div>
-        <div class="resumo-card"><span class="icone">🔄</span><span>MTBF (Entre Falhas)</span><strong style="color:#4ade80">{{mtbf_str}}</strong><small>Intervalo médio</small></div>
+        <div class="resumo-card"><span class="icone">⏱️</span><span>MTTR (Tempo Reparo)</span><strong style="color:#fb923c" id="valorMTTR">{{mttr_str}}</strong><small id="subMTTR">Média geral corretivas</small></div>
+        <div class="resumo-card">
+            <span class="icone">🔄</span>
+            <span>MTBF por Máquina</span>
+            <strong style="color:#4ade80" id="valorMTBF">{{mtbf_str}}</strong>
+            <select id="selectMaquinaMTBF" style="margin-top:8px;padding:5px 9px;font-size:12px;border-radius:8px">
+                <option value="geral">Todas as máquinas (Média)</option>
+                {% for m in mtbf_maquinas %}
+                <option value="{{m.chave}}">{{m.nome}} ({{m.corretivas}} falhas)</option>
+                {% endfor %}
+            </select>
+            <small id="subMTBF">Selecione uma máquina específica</small>
+        </div>
         <div class="resumo-card"><span class="icone">📈</span><span>O.S. Auditadas</span><strong>{{total_fin}}</strong><small>{{total_meses}} mês(es)</small></div>
     </section>
 
@@ -2464,26 +2488,32 @@ HTML_CENTRAL_GESTAO = r"""
         </section>
 
         <section class="card" style="margin-bottom:0">
-            <h2>🏭 Top 5 Máquinas / Setores</h2>
-            {% if ranking_maquinas %}
+            <h2>🏭 Confiabilidade por Máquina (MTBF & MTTR Individual)</h2>
+            {% if mtbf_maquinas %}
             <div class="tabela-wrapper" style="margin-top:10px">
-                <table style="min-width:460px">
-                    <thead><tr><th>#</th><th>Máquina</th><th>Qtd</th><th>Corret</th><th>Horas</th></tr></thead>
+                <table style="min-width:540px">
+                    <thead><tr><th>Máquina</th><th>Corretivas</th><th>MTBF (Entre Falhas)</th><th>MTTR (Reparo)</th><th>Horas Totais</th></tr></thead>
                     <tbody>
-                    {% for r in ranking_maquinas %}
-                    <tr><td><strong>{{loop.index}}º</strong></td><td><strong>{{r.nome}}</strong></td><td>{{r.qtd}}</td><td><span class="tipo-badge tipo-corretiva">{{r.corretivas}}</span></td><td><strong>{{r.horas_str}}</strong></td></tr>
+                    {% for m in mtbf_maquinas %}
+                    <tr>
+                        <td><strong>{{m.nome}}</strong></td>
+                        <td><span class="tipo-badge tipo-corretiva">{{m.corretivas}}</span></td>
+                        <td><strong style="color:#4ade80">{{m.mtbf_str}}</strong></td>
+                        <td><strong style="color:#fb923c">{{m.mttr_str}}</strong></td>
+                        <td>{{m.horas_str}}</td>
+                    </tr>
                     {% endfor %}
                     </tbody>
                 </table>
             </div>
             {% else %}
-            <p class="muted" style="margin-top:20px">Finalize O.S. para gerar o ranking.</p>
+            <p class="muted" style="margin-top:20px">Finalize O.S. corretivas identificando a máquina para calcular o MTBF individual.</p>
             {% endif %}
         </section>
     </div>
 
     <section class="card">
-        <h2>👥 Equipe de Manutenção & Eficiência Operacional</h2>
+        <h2>👷 Eficiência Individual dos Funcionários</h2>
         <form method="GET" style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
             <input type="hidden" name="tab" value="indicadores">
             <label for="mes" style="margin:0;color:var(--mt)">Período:</label>
@@ -2493,14 +2523,16 @@ HTML_CENTRAL_GESTAO = r"""
             </select>
         </form>
         <div class="grid-triplo">
-        {% for d in duplas %}
+        {% for f in funcionarios_indiv %}
             <div style="background:#0c0e12;border:1px solid var(--bd);border-radius:12px;padding:16px">
-                <h3 style="margin:0 0 8px;color:var(--or2);font-size:15px">{{d.icone}} {{d.nome}}</h3>
-                <p style="margin:3px 0;font-size:12.5px"><strong>Mec:</strong> {{d.mecanico}} | <strong>Elec:</strong> {{d.eletricista}}</p>
-                <p style="margin:3px 0;font-size:12.5px"><strong>Turno:</strong> {{d.turno}}</p>
-                <p style="margin:6px 0;font-size:13px">Apontado: <strong style="color:var(--or2)">{{ d.tempo_str }}</strong> ({{ d.qtd_os }} O.S.)</p>
-                <p style="margin:6px 0;font-size:13px">Eficiência: <strong style="color:#4ade80">{{ d.eficiencia }}%</strong></p>
-                <div class="progresso"><span style="width:{{ d.eficiencia_clamp }}%"></span></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                    <h3 style="margin:0;color:var(--or2);font-size:16px">{{f.icone}} {{f.nome}}</h3>
+                    <span class="tipo-badge {{ 'tipo-preventiva' if f.funcao=='Eletricista' else 'tipo-corretiva' }}">{{f.funcao}}</span>
+                </div>
+                <p style="margin:3px 0;font-size:12px;color:var(--mt)"><strong>Equipe:</strong> {{f.equipe}} • <strong>Turno:</strong> {{f.turno}}</p>
+                <p style="margin:6px 0;font-size:13px">Apontado: <strong style="color:var(--or2)">{{ f.tempo_str }}</strong> ({{ f.qtd_os }} O.S. • {{ f.dias }} dia(s))</p>
+                <p style="margin:6px 0;font-size:13px">Eficiência Individual: <strong style="color:#4ade80">{{ f.eficiencia }}%</strong></p>
+                <div class="progresso"><span style="width:{{ f.eficiencia_clamp }}%"></span></div>
             </div>
         {% endfor %}
         </div>
@@ -2602,6 +2634,9 @@ window.__FLASH__={{flash_msgs|tojson}};
 const dadosTabela = {{ dados_tabela|tojson }};
 const totalGeralPrev = {{ total_preventiva }};
 const totalGeralCorr = {{ total_corretiva }};
+const mtbfMaquinasDados = {{ mtbf_maquinas|tojson }};
+const mtbfGeralTexto = {{ mtbf_str|tojson }};
+const mttrGeralTexto = {{ mttr_str|tojson }};
 
 document.addEventListener("DOMContentLoaded", function() {
     const ctx = document.getElementById('graficoPizza').getContext('2d');
@@ -2633,6 +2668,31 @@ document.addEventListener("DOMContentLoaded", function() {
             chartInstance.data.datasets[0].data = encontrado ? [encontrado.prev_qtd, encontrado.corr_qtd] : [0, 0];
         }
         chartInstance.update();
+    });
+
+    document.getElementById('selectMaquinaMTBF')?.addEventListener('change', function() {
+        const val = this.value;
+        const elMtbf = document.getElementById('valorMTBF');
+        const elSubMtbf = document.getElementById('subMTBF');
+        const elMttr = document.getElementById('valorMTTR');
+        const elSubMttr = document.getElementById('subMTTR');
+
+        if (val === 'geral') {
+            elMtbf.textContent = mtbfGeralTexto;
+            elSubMtbf.textContent = 'Média entre máquinas com 2+ falhas';
+            elMttr.textContent = mttrGeralTexto;
+            elSubMttr.textContent = 'Média geral corretivas';
+        } else {
+            const item = mtbfMaquinasDados.find(m => m.chave === val);
+            if (item) {
+                elMtbf.textContent = item.mtbf_str;
+                elSubMtbf.textContent = item.corretivas >= 2
+                    ? `${item.nome} (${item.corretivas} falhas registradas)`
+                    : `${item.nome} (requer mín. 2 falhas)`;
+                elMttr.textContent = item.mttr_str;
+                elSubMttr.textContent = `Reparo médio: ${item.nome}`;
+            }
+        }
     });
 
     const modalEditarPCM = document.getElementById("modalEditarPCM");
@@ -3299,7 +3359,6 @@ def central_gestao():
     total_preventiva = 0
     total_corretiva = 0
     horas_corretivas = 0.0
-    datas_corretivas = []
 
     for o in ordens_fin:
         tipo = o.tipo_manutencao or "Preventiva"
@@ -3309,23 +3368,31 @@ def central_gestao():
         else:
             total_corretiva += 1
             horas_corretivas += horas_os
-            try:
-                datas_corretivas.append(datetime.strptime(o.abertura, FORMATO_DATA))
-            except (ValueError, TypeError):
-                pass
-        nome_maq = (o.setor or "").strip()
-        if nome_maq:
-            if nome_maq not in maquinas_stats:
-                maquinas_stats[nome_maq] = {
+
+        nome_maq = re.sub(r"\s+", " ", (o.setor or "").strip())
+        chave_maq = normalizar_chave_maquina(nome_maq)
+        if chave_maq:
+            if chave_maq not in maquinas_stats:
+                maquinas_stats[chave_maq] = {
+                    "chave": chave_maq,
                     "nome": nome_maq,
                     "qtd": 0,
                     "corretivas": 0,
                     "horas": 0.0,
+                    "horas_corretivas": 0.0,
+                    "datas_corretivas": [],
                 }
-            maquinas_stats[nome_maq]["qtd"] += 1
-            maquinas_stats[nome_maq]["horas"] += horas_os
+            maquinas_stats[chave_maq]["qtd"] += 1
+            maquinas_stats[chave_maq]["horas"] += horas_os
             if tipo == "Corretiva":
-                maquinas_stats[nome_maq]["corretivas"] += 1
+                maquinas_stats[chave_maq]["corretivas"] += 1
+                maquinas_stats[chave_maq]["horas_corretivas"] += horas_os
+                try:
+                    maquinas_stats[chave_maq]["datas_corretivas"].append(
+                        datetime.strptime(o.abertura, FORMATO_DATA)
+                    )
+                except (ValueError, TypeError):
+                    pass
 
         chave_mes = chave_mes_os(o) or datetime.now().strftime("%Y-%m")
         if chave_mes not in meses_dict:
@@ -3346,27 +3413,51 @@ def central_gestao():
     )
     mttr_str = horas_decimais_para_hhmm(mttr_horas) if total_corretiva > 0 else "N/D"
 
-    datas_corretivas.sort()
-    if len(datas_corretivas) >= 2:
-        intervalo_total_h = (
-            datas_corretivas[-1] - datas_corretivas[0]
-        ).total_seconds() / 3600.0
-        mtbf_horas = max(
-            0.0, (intervalo_total_h - horas_corretivas) / (len(datas_corretivas) - 1)
+    mtbf_maquinas = []
+    mtbfs_validos = []
+    for st in maquinas_stats.values():
+        datas = sorted(st["datas_corretivas"])
+        if len(datas) >= 2:
+            intervalo_h = (datas[-1] - datas[0]).total_seconds() / 3600.0
+            mtbf_h = max(
+                0.0, (intervalo_h - st["horas_corretivas"]) / (len(datas) - 1)
+            )
+            mtbfs_validos.append(mtbf_h)
+            mtbf_maq_str = formatar_duracao_indicador(mtbf_h)
+        else:
+            mtbf_h = None
+            mtbf_maq_str = "N/D (1 falha)" if len(datas) == 1 else "Sem falhas"
+
+        mttr_maq_h = (
+            (st["horas_corretivas"] / st["corretivas"])
+            if st["corretivas"] > 0
+            else 0.0
         )
-        mtbf_str = (
-            f"{round(mtbf_horas / 24, 1)} dias"
-            if mtbf_horas >= 24
-            else horas_decimais_para_hhmm(mtbf_horas)
-        )
+        mtbf_maquinas.append({
+            "chave": st["chave"],
+            "nome": st["nome"],
+            "qtd": st["qtd"],
+            "corretivas": st["corretivas"],
+            "mtbf_horas": mtbf_h,
+            "mtbf_str": mtbf_maq_str,
+            "mttr_str": (
+                horas_decimais_para_hhmm(mttr_maq_h)
+                if st["corretivas"] > 0
+                else "N/D"
+            ),
+            "horas": st["horas"],
+            "horas_str": horas_decimais_para_hhmm(st["horas"]),
+        })
+
+    mtbf_maquinas.sort(
+        key=lambda x: (-x["corretivas"], -x["horas"], x["nome"])
+    )
+
+    if mtbfs_validos:
+        media_mtbf_h = sum(mtbfs_validos) / len(mtbfs_validos)
+        mtbf_str = formatar_duracao_indicador(media_mtbf_h)
     else:
         mtbf_str = "N/D"
-
-    ranking_maquinas = sorted(
-        maquinas_stats.values(), key=lambda x: x["horas"], reverse=True
-    )[:5]
-    for r in ranking_maquinas:
-        r["horas_str"] = horas_decimais_para_hhmm(r["horas"])
 
     meses_ordenados = sorted(meses_dict.values(), key=lambda x: x["chave"])
     dados_tabela = []
@@ -3404,31 +3495,42 @@ def central_gestao():
         o for o in ordens_fin if mes_sel == "geral" or chave_mes_os(o) == mes_sel
     ]
 
-    duplas_calc = []
+    funcionarios_indiv = []
     for d in DUPLAS:
-        membros = {d["mecanico"], d["eletricista"]}
-        horas, dias, qtd_os = 0.0, set(), 0
-        for o in ordens_fin_eq:
-            if {f.strip() for f in (o.funcionarios or "").split(",")} & membros:
-                horas += o.horas_trabalhadas or 0.0
-                qtd_os += 1
-                try:
-                    dias.add(datetime.strptime(o.finalizacao, FORMATO_DATA).date())
-                except (ValueError, TypeError):
-                    pass
-        cap = len(dias) * JORNADA_REFERENCIA
-        eficiencia = min(100.0, round(horas / cap * 100, 1)) if cap else 0.0
-        duplas_calc.append(
-            dict(
-                d,
-                horas=horas,
-                tempo_str=horas_decimais_para_hhmm(horas),
-                dias=len(dias),
-                qtd_os=qtd_os,
-                eficiencia=eficiencia,
-                eficiencia_clamp=int(eficiencia),
-            )
-        )
+        for chave_cargo, cargo_label, icone_cargo in (
+            ("mecanico", "Mecânico", "🔧"),
+            ("eletricista", "Eletricista", "⚡"),
+        ):
+            nome_func = d[chave_cargo]
+            horas, dias, qtd_os = 0.0, set(), 0
+            for o in ordens_fin_eq:
+                executantes = {
+                    f.strip() for f in (o.funcionarios or "").split(",") if f.strip()
+                }
+                if nome_func in executantes:
+                    horas += o.horas_trabalhadas or 0.0
+                    qtd_os += 1
+                    try:
+                        dias.add(
+                            datetime.strptime(o.finalizacao, FORMATO_DATA).date()
+                        )
+                    except (ValueError, TypeError):
+                        pass
+            cap = len(dias) * JORNADA_REFERENCIA
+            eficiencia = min(100.0, round(horas / cap * 100, 1)) if cap else 0.0
+            funcionarios_indiv.append({
+                "nome": nome_func,
+                "funcao": cargo_label,
+                "icone": icone_cargo,
+                "equipe": d["nome"],
+                "turno": d["turno"],
+                "horas": horas,
+                "tempo_str": horas_decimais_para_hhmm(horas),
+                "dias": len(dias),
+                "qtd_os": qtd_os,
+                "eficiencia": eficiencia,
+                "eficiencia_clamp": int(eficiencia),
+            })
 
     logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
     tamanho_kb = (
@@ -3475,9 +3577,9 @@ def central_gestao():
         else 0,
         mttr_str=mttr_str,
         mtbf_str=mtbf_str,
-        ranking_maquinas=ranking_maquinas,
+        mtbf_maquinas=mtbf_maquinas,
         dados_tabela=dados_tabela,
-        duplas=duplas_calc,
+        funcionarios_indiv=funcionarios_indiv,
         meses=meses_eq,
         mes_sel=mes_sel,
         logs=logs,
