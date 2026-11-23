@@ -491,7 +491,7 @@ def manifest_pwa():
         "description": (
             "Gestão de Ordens de Serviço, Estoque, PCM e Compras — JAMAICA"
         ),
-        "start_url": "/",
+        "start_url": "/os",
         "display": "standalone",
         "orientation": "any",
         "background_color": "#08090c",
@@ -872,6 +872,61 @@ body {
 }
 .container { max-width: 1640px; width: 100%; margin: auto; animation: fadeIn .35s ease-out; overflow-x: clip; }
 .muted { color: var(--mt); font-size: 13px; }
+
+/* LOBBY DE ENTRADA */
+.lobby-wrap {
+    max-width: 820px;
+    margin: 4vh auto;
+}
+.lobby-card {
+    background: linear-gradient(175deg, var(--s2), var(--s1));
+    border: 1px solid rgba(251, 146, 60, 0.32);
+    border-radius: 18px;
+    padding: 32px;
+    text-align: center;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.65), 0 0 40px rgba(249, 115, 22, 0.14);
+}
+.lobby-logo {
+    width: 68px;
+    height: 68px;
+    margin: 0 auto 16px;
+    border-radius: 16px;
+    background: var(--btn);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-weight: 900;
+    color: #fff;
+    box-shadow: 0 10px 28px rgba(249, 115, 22, 0.35);
+}
+.lobby-card h1 {
+    margin: 0 0 8px;
+    font-size: 26px;
+    font-weight: 800;
+    color: #fff;
+}
+.lobby-card p.sub {
+    margin: 0 auto 24px;
+    max-width: 560px;
+    color: #fed7aa;
+    font-size: 14px;
+}
+.lobby-acoes {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 24px;
+}
+.btn-entrar-lobby {
+    padding: 14px 28px !important;
+    font-size: 15px !important;
+    border-radius: 12px !important;
+    background: var(--btn);
+    color: #fff;
+    box-shadow: 0 8px 24px rgba(249, 115, 22, 0.4);
+}
 
 /* CABEÇALHO E NAVEGAÇÃO */
 .cabecalho {
@@ -1289,6 +1344,9 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 
 @media (max-width: 860px) {
     body { padding: 12px; padding-bottom: 80px; line-height: 1.5; font-size: 14px; }
+    .lobby-card { padding: 22px 16px; border-radius: 14px; }
+    .lobby-card h1 { font-size: 20px; }
+    .btn-entrar-lobby { width: 100%; }
     .cabecalho { padding: 15px; gap: 12px; margin-bottom: 16px; border-radius: 12px; }
     .cabecalho-principal { width: 100%; }
     .cabecalho-titulo { align-items: flex-start; gap: 10px; }
@@ -1659,6 +1717,36 @@ if(modalEditarSpare){
 # ==============================================================================
 # TEMPLATES HTML
 # ==============================================================================
+HTML_LOBBY = r"""
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOBBY — MANUTENÇÃO JAMAICA</title><style>{{css|safe}}</style></head><body>
+<div class="lobby-wrap">
+    <div class="lobby-card">
+        <div class="lobby-logo">J</div>
+        <h1>CENTRAL DE MANUTENÇÃO — JAMAICA</h1>
+        <p class="sub">Ambiente operacional de Ordens de Serviço, Estoque, Spare Parts, PCM e Solicitações de Compra.</p>
+
+        <div style="display:flex;justify-content:center;margin-bottom:20px">
+            <span class="relogio" id="relogio"></span>
+        </div>
+
+        <div class="resumo" style="margin-bottom:8px;text-align:left">
+            <div class="resumo-card"><span class="icone">📋</span><span>Total de O.S.</span><strong>{{total}}</strong><small>Histórico geral</small></div>
+            <div class="resumo-card"><span class="icone">🟡</span><span>O.S. Abertas</span><strong style="color:#fde047">{{abertas}}</strong><small>Em fila / execução</small></div>
+            <div class="resumo-card"><span class="icone">⏳</span><span>Aguard. Peça</span><strong style="color:#d8b4fe">{{aguardando}}</strong><small>Suprimentos</small></div>
+            <div class="resumo-card"><span class="icone">🔢</span><span>Próxima O.S.</span><strong>{{proxima}}</strong><small>Numeração automática</small></div>
+        </div>
+
+        <div class="lobby-acoes">
+            <a href="{{url_for('dashboard')}}" class="botao btn-entrar-lobby">🚀 Entrar no Sistema</a>
+            <a href="{{url_for('central_gestao')}}" class="botao limpar" style="padding:14px 20px;border-radius:12px">🔐 Central de Gestão</a>
+            <button type="button" id="btnInstalarApp" class="botao limpar" style="display:inline-flex;padding:14px 20px;border-radius:12px">📲 Instalar App</button>
+        </div>
+    </div>
+    <footer class="rodape">Central de Manutenção JAMAICA — Lobby de Acesso</footer>
+</div>
+<script>window.__FLASH__={{flash_msgs|tojson}};</script><script>{{js|safe}}</script></body></html>
+"""
+
 HTML_OS = r"""
 <!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>CENTRAL O.S. — JAMAICA</title><style>{{css|safe}}</style></head><body><div class="container">
 <header class="cabecalho">
@@ -1671,7 +1759,8 @@ HTML_OS = r"""
             </div>
         </div>
         <div class="nav-abas">
-            <a href="{{url_for('dashboard')}}" class="aba ativa">📋 Ordens de Serviço (Início)</a>
+            <a href="{{url_for('lobby')}}" class="aba">🏠 Lobby</a>
+            <a href="{{url_for('dashboard')}}" class="aba ativa">📋 Ordens de Serviço</a>
             <a href="{{url_for('central_gestao')}}" class="aba" style="border-color:var(--or2);color:#fed7aa">🔐 Central de Gestão (Estoque, PCM, Compras & Indicadores)</a>
             <button type="button" id="btnInstalarApp" class="aba" style="display:inline-flex;background:var(--btn);border-color:var(--or);color:#fff">📲 Instalar App</button>
         </div>
@@ -1894,7 +1983,7 @@ HTML_OS = r"""
 """
 
 HTML_LOGIN_SISTEMA = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Voltar para Ordens de Serviço (Início)</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};</script><script>{{js|safe}}</script></body></html>
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a><a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};</script><script>{{js|safe}}</script></body></html>
 """
 
 HTML_CENTRAL_GESTAO = r"""
@@ -1911,7 +2000,8 @@ HTML_CENTRAL_GESTAO = r"""
             </div>
         </div>
         <div class="nav-abas">
-            <a href="{{url_for('dashboard')}}" class="aba">📋 Ordens de Serviço (Início)</a>
+            <a href="{{url_for('lobby')}}" class="aba">🏠 Lobby</a>
+            <a href="{{url_for('dashboard')}}" class="aba">📋 Ordens de Serviço</a>
             <a href="{{url_for('central_gestao')}}" class="aba ativa">🔐 Central de Gestão Unificada</a>
             <button type="button" id="btnInstalarApp" class="aba" style="display:inline-flex;background:var(--btn);border-color:var(--or);color:#fff">📲 Instalar App</button>
         </div>
@@ -2824,7 +2914,7 @@ def login_sistema():
 def logout_sistema():
     session.pop("logado_sistema", None)
     flash("Sessão encerrada com sucesso.")
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("lobby"))
 
 
 @app.route("/health")
@@ -2847,9 +2937,26 @@ def baixar_backup_db():
 
 
 # ==============================================================================
-# ROTA PRINCIPAL: ORDENS DE SERVIÇO (LIVRE ACESSO)
+# ROTA LOBBY DE ENTRADA
 # ==============================================================================
 @app.route("/")
+def lobby():
+    abertas = OrdemServico.query.filter_by(status="Aberta").count()
+    aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
+    total = OrdemServico.query.count()
+    return renderizar(
+        HTML_LOBBY,
+        total=total,
+        abertas=abertas,
+        aguardando=aguardando,
+        proxima=gerar_numero_os(),
+    )
+
+
+# ==============================================================================
+# ROTA ORDENS DE SERVIÇO (LIVRE ACESSO)
+# ==============================================================================
+@app.route("/os")
 def dashboard():
     busca = request.args.get("busca", "").strip()
     prefill_setor = request.args.get("abrir_maquina", "").strip()
