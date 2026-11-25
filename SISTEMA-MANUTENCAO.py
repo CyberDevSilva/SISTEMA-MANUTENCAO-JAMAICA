@@ -6,6 +6,7 @@ import calendar
 import re
 import shutil
 import socket
+import json
 from datetime import datetime, date, timedelta
 from io import BytesIO
 from threading import Lock
@@ -29,7 +30,6 @@ from flask import (
     Response,
 )
 from flask_sqlalchemy import SQLAlchemy
-import json
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -48,7 +48,8 @@ EXTENSOES_EVIDENCIA = {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
 }
-TAMANHO_MAX_EVIDENCIA = 6 * 1024 * 1024  # 6 MB
+TAMANHO_MAX_EVIDENCIA = 6 * 1024 * 1024  # 6 MB por foto
+MAX_FOTOS_EVIDENCIA_POR_OS = 12
 
 
 def obter_database_uri():
@@ -91,7 +92,7 @@ app.config["SECRET_KEY"] = carregar_chave_secreta()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600
-app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 48 * 1024 * 1024  # 48 MB para múltiplas fotos
 app.config["SQLALCHEMY_DATABASE_URI"] = app_db_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
@@ -324,8 +325,12 @@ class OrdemServico(db.Model):
     horas_trabalhadas = db.Column(db.Float, default=0.0)
     observacao_tecnica = db.Column(db.Text, default="")
     motivo_pausa = db.Column(db.String(200), default="")
-    evidencia_imagem = db.Column(db.String(255), default="")
-    evidencia_nome = db.Column(db.String(255), default="")
+    evidencia_imagem = db.Column(db.Text, default="")
+    evidencia_nome = db.Column(db.Text, default="")
+
+    @property
+    def evidencias_lista(self):
+        return listar_evidencias_ordem(self)
 
 
 class ItemEstoque(db.Model):
@@ -488,14 +493,28 @@ def inicializar_banco():
             db.session.execute(
                 text(
                     "ALTER TABLE ordens_servico ADD COLUMN evidencia_imagem"
-                    " VARCHAR(255) DEFAULT ''"
+                    " TEXT DEFAULT ''"
+                )
+            )
+        elif IS_POSTGRES:
+            db.session.execute(
+                text(
+                    "ALTER TABLE ordens_servico ALTER COLUMN evidencia_imagem"
+                    " TYPE TEXT"
                 )
             )
         if "evidencia_nome" not in cols:
             db.session.execute(
                 text(
                     "ALTER TABLE ordens_servico ADD COLUMN evidencia_nome"
-                    " VARCHAR(255) DEFAULT ''"
+                    " TEXT DEFAULT ''"
+                )
+            )
+        elif IS_POSTGRES:
+            db.session.execute(
+                text(
+                    "ALTER TABLE ordens_servico ALTER COLUMN evidencia_nome"
+                    " TYPE TEXT"
                 )
             )
         db.session.commit()
@@ -536,7 +555,7 @@ def manifest_pwa():
 @app.route("/sw.js")
 def service_worker():
     sw_code = """
-    const CACHE_NAME = 'manutencao-jamaica-v2';
+    const CACHE_NAME = 'manutencao-jamaica-v3';
     self.addEventListener('install', event => {
         self.skipWaiting();
     });
@@ -554,7 +573,7 @@ def service_worker():
 
 
 # ==============================================================================
-# FUNÇÕES UTILITÁRIAS E SEGURANÇA
+# FUNÇÕES UTILITÁRIAS, MÚLTIPLAS EVIDÊNCIAS E SEGURANÇA
 # ==============================================================================
 def agora_formatado():
     return datetime.now().strftime(FORMATO_DATA)
@@ -562,6 +581,52 @@ def agora_formatado():
 
 def hoje_iso():
     return date.today().strftime("%Y-%m-%d")
+
+
+def _decodificar_campo_evidencia(raw):
+    texto = (raw or "").strip()
+    if not texto:
+        return []
+    if texto.startswith("["):
+        try:
+            lista = json.loads(texto)
+            if isinstance(lista, list):
+                return [str(x).strip() for x in lista if str(x).strip()]
+        except Exception:
+            pass
+    return [texto]
+
+
+def listar_evidencias_ordem(ordem):
+    arquivos = _decodificar_campo_evidencia(
+        getattr(ordem, "evidencia_imagem", "")
+    )
+    nomes = _decodificar_campo_evidencia(getattr(ordem, "evidencia_nome", ""))
+    itens = []
+    for idx, arq in enumerate(arquivos):
+        arq_limpo = os.path.basename(arq)
+        if not arq_limpo:
+            continue
+        nome_exib = nomes[idx] if idx < len(nomes) and nomes[idx] else arq_limpo
+        itens.append({
+            "arquivo": arq_limpo,
+            "nome": nome_exib,
+            "url": f"/os/evidencia/{arq_limpo}",
+        })
+    return itens
+
+
+def gravar_evidencias_ordem(ordem, lista_itens):
+    if not lista_itens:
+        ordem.evidencia_imagem = ""
+        ordem.evidencia_nome = ""
+        return
+    ordem.evidencia_imagem = json.dumps(
+        [item["arquivo"] for item in lista_itens], ensure_ascii=False
+    )
+    ordem.evidencia_nome = json.dumps(
+        [item["nome"] for item in lista_itens], ensure_ascii=False
+    )
 
 
 def salvar_evidencia_os(arquivo, numero_os):
@@ -575,15 +640,23 @@ def salvar_evidencia_os(arquivo, numero_os):
 
     conteudo = arquivo.read()
     if not conteudo:
-        return "", "", "O arquivo de evidência está vazio."
+        return "", "", "Um dos arquivos de evidência está vazio."
     if len(conteudo) > TAMANHO_MAX_EVIDENCIA:
-        return "", "", "A imagem de evidência excede o limite de 6 MB."
+        return (
+            "",
+            "",
+            f"A imagem '{nome_orig[:40]}' excede o limite de 6 MB por foto.",
+        )
 
     eh_png = conteudo.startswith(b"\x89PNG\r\n\x1a\n")
     eh_jpg = conteudo.startswith(b"\xff\xd8\xff")
     eh_webp = conteudo.startswith(b"RIFF") and conteudo[8:12] == b"WEBP"
     if not (eh_png or eh_jpg or eh_webp):
-        return "", "", "Arquivo não parece ser uma imagem válida."
+        return (
+            "",
+            "",
+            f"O arquivo '{nome_orig[:40]}' não parece ser uma imagem válida.",
+        )
 
     os.makedirs(EVIDENCIAS_DIR, exist_ok=True)
     slug_os = re.sub(r"[^A-Za-z0-9_-]", "_", numero_os or "os")
@@ -595,16 +668,43 @@ def salvar_evidencia_os(arquivo, numero_os):
     return nome_seguro, nome_orig[:200], None
 
 
+def salvar_multiplas_evidencias_os(arquivos, numero_os, existentes=0):
+    validos = [a for a in (arquivos or []) if a and (a.filename or "").strip()]
+    if not validos:
+        return [], None
+
+    if existentes + len(validos) > MAX_FOTOS_EVIDENCIA_POR_OS:
+        return (
+            [],
+            f"Limite máximo de {MAX_FOTOS_EVIDENCIA_POR_OS} fotos por O.S. atingido.",
+        )
+
+    salvos = []
+    for arq in validos:
+        nome_seguro, nome_orig, erro = salvar_evidencia_os(arq, numero_os)
+        if erro:
+            for item in salvos:
+                remover_evidencia_os(item["arquivo"])
+            return [], erro
+        salvos.append({
+            "arquivo": nome_seguro,
+            "nome": nome_orig,
+            "url": f"/os/evidencia/{nome_seguro}",
+        })
+    return salvos, None
+
+
 def remover_evidencia_os(nome_arquivo):
     if not nome_arquivo:
         return
-    nome_limpo = os.path.basename(nome_arquivo)
-    caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
-    if os.path.exists(caminho):
-        try:
-            os.remove(caminho)
-        except OSError:
-            pass
+    for item in _decodificar_campo_evidencia(nome_arquivo):
+        nome_limpo = os.path.basename(item)
+        caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
+        if os.path.exists(caminho):
+            try:
+                os.remove(caminho)
+            except OSError:
+                pass
 
 
 def gerar_numero_os():
@@ -725,7 +825,7 @@ def proteger_csrf():
 
 @app.errorhandler(413)
 def arquivo_muito_grande(e):
-    flash("Arquivo enviado excede o tamanho máximo permitido (12 MB).")
+    flash("Os arquivos enviados excedem o tamanho máximo permitido (48 MB).")
     return redirect(request.referrer or url_for("dashboard"))
 
 
@@ -831,85 +931,92 @@ def renderizar(template, **contexto):
     )
 
 
+def _estilizar_aba_excel(ws, df, coluna_status=None):
+    ws.freeze_panes = "A2"
+    if ws.max_row >= 1 and ws.max_column >= 1:
+        ws.auto_filter.ref = ws.dimensions
+
+    header_fill = PatternFill(
+        start_color="1F2937", end_color="1F2937", fill_type="solid"
+    )
+    accent_border = Side(border_style="medium", color="F97316")
+    thin_border_side = Side(border_style="thin", color="D1D5DB")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    cell_font = Font(name="Calibri", size=10, color="111827")
+    zebra_fill = PatternFill(
+        start_color="F9FAFB", end_color="F9FAFB", fill_type="solid"
+    )
+    alert_fill = PatternFill(
+        start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"
+    )
+    alert_font = Font(name="Calibri", size=10, bold=True, color="991B1B")
+    ok_fill = PatternFill(
+        start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"
+    )
+    ok_font = Font(name="Calibri", size=10, bold=True, color="166534")
+
+    ws.row_dimensions[1].height = 26
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(
+            horizontal="left", vertical="center", wrap_text=True
+        )
+        cell.border = Border(
+            bottom=accent_border, left=thin_border_side, right=thin_border_side
+        )
+
+    status_col_idx = None
+    if coluna_status and coluna_status in df.columns:
+        status_col_idx = list(df.columns).index(coluna_status) + 1
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        ws.row_dimensions[row_idx].height = 20
+        is_even = row_idx % 2 == 0
+        for col_idx, cell in enumerate(row, start=1):
+            cell.font = cell_font
+            cell.alignment = Alignment(vertical="center", wrap_text=False)
+            cell.border = Border(
+                bottom=thin_border_side,
+                left=thin_border_side,
+                right=thin_border_side,
+            )
+            if is_even:
+                cell.fill = zebra_fill
+            if status_col_idx and col_idx == status_col_idx:
+                val_str = str(cell.value or "").lower()
+                if any(
+                    k in val_str
+                    for k in (
+                        "baixo",
+                        "atrasado",
+                        "emergencial",
+                        "reprovado",
+                        "crítica",
+                        "aguardando",
+                    )
+                ):
+                    cell.fill = alert_fill
+                    cell.font = alert_font
+                elif any(
+                    k in val_str
+                    for k in ("normal", "finalizada", "aprovado", "comprado")
+                ):
+                    cell.fill = ok_fill
+                    cell.font = ok_font
+
+    for coluna in ws.columns:
+        letra = coluna[0].column_letter
+        maior = max([len(str(c.value or "")) for c in coluna] or [0])
+        ws.column_dimensions[letra].width = min(max(maior + 4, 14), 45)
+
+
 def gerar_excel(df, nome_planilha, prefixo, coluna_status=None):
     memoria = BytesIO()
     with pd.ExcelWriter(memoria, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=nome_planilha)
         ws = writer.sheets[nome_planilha]
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-
-        header_fill = PatternFill(
-            start_color="1F2937", end_color="1F2937", fill_type="solid"
-        )
-        accent_border = Side(border_style="medium", color="F97316")
-        thin_border_side = Side(border_style="thin", color="D1D5DB")
-        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-        cell_font = Font(name="Calibri", size=10, color="111827")
-        zebra_fill = PatternFill(
-            start_color="F9FAFB", end_color="F9FAFB", fill_type="solid"
-        )
-        alert_fill = PatternFill(
-            start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"
-        )
-        alert_font = Font(name="Calibri", size=10, bold=True, color="991B1B")
-        ok_fill = PatternFill(
-            start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"
-        )
-        ok_font = Font(name="Calibri", size=10, bold=True, color="166534")
-
-        ws.row_dimensions[1].height = 26
-        for cell in ws[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(
-                horizontal="left", vertical="center", wrap_text=True
-            )
-            cell.border = Border(
-                bottom=accent_border, left=thin_border_side, right=thin_border_side
-            )
-
-        status_col_idx = None
-        if coluna_status and coluna_status in df.columns:
-            status_col_idx = list(df.columns).index(coluna_status) + 1
-
-        for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
-            ws.row_dimensions[row_idx].height = 20
-            is_even = row_idx % 2 == 0
-            for col_idx, cell in enumerate(row, start=1):
-                cell.font = cell_font
-                cell.alignment = Alignment(vertical="center", wrap_text=False)
-                cell.border = Border(
-                    bottom=thin_border_side, left=thin_border_side, right=thin_border_side
-                )
-                if is_even:
-                    cell.fill = zebra_fill
-                if status_col_idx and col_idx == status_col_idx:
-                    val_str = str(cell.value or "").lower()
-                    if any(
-                        k in val_str
-                        for k in (
-                            "baixo",
-                            "atrasado",
-                            "emergencial",
-                            "reprovado",
-                            "crítica",
-                            "aguardando",
-                        )
-                    ):
-                        cell.fill = alert_fill
-                        cell.font = alert_font
-                    elif any(
-                        k in val_str
-                        for k in ("normal", "finalizada", "aprovado", "comprado")
-                    ):
-                        cell.fill = ok_fill
-                        cell.font = ok_font
-
-        for coluna in ws.columns:
-            letra = coluna[0].column_letter
-            maior = max([len(str(c.value or "")) for c in coluna] or [0])
-            ws.column_dimensions[letra].width = min(max(maior + 4, 14), 45)
+        _estilizar_aba_excel(ws, df, coluna_status=coluna_status)
 
     memoria.seek(0)
     nome = f"{prefixo}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
@@ -921,6 +1028,171 @@ def gerar_excel(df, nome_planilha, prefixo, coluna_status=None):
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ),
     )
+
+
+def gerar_excel_multiplas_abas(abas_config, prefixo):
+    memoria = BytesIO()
+    with pd.ExcelWriter(memoria, engine="openpyxl") as writer:
+        for nome_aba, df, col_status in abas_config:
+            titulo_limpo = nome_aba[:31]
+            df.to_excel(writer, index=False, sheet_name=titulo_limpo)
+            ws = writer.sheets[titulo_limpo]
+            _estilizar_aba_excel(ws, df, coluna_status=col_status)
+
+    memoria.seek(0)
+    nome = f"{prefixo}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    return send_file(
+        memoria,
+        as_attachment=True,
+        download_name=nome,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+    )
+
+
+def serializar_banco_completo():
+    ordens = OrdemServico.query.order_by(OrdemServico.id.asc()).all()
+    estoque = ItemEstoque.query.order_by(ItemEstoque.id.asc()).all()
+    movs = HistoricoMovimentacao.query.order_by(
+        HistoricoMovimentacao.id.asc()
+    ).all()
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.id.asc()).all()
+    planos = PlanoPreventivo.query.order_by(PlanoPreventivo.id.asc()).all()
+    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.asc()).all()
+    logs = LogAuditoria.query.order_by(LogAuditoria.id.asc()).all()
+
+    return {
+        "sistema": "Central de Manutenção JAMAICA",
+        "exportado_em": agora_formatado(),
+        "motor_banco": "PostgreSQL" if IS_POSTGRES else "SQLite",
+        "resumo": {
+            "ordens_servico": len(ordens),
+            "itens_estoque": len(estoque),
+            "movimentacoes": len(movs),
+            "maquinas_spare": len(maquinas),
+            "planos_pcm": len(planos),
+            "solicitacoes_compras": len(compras),
+            "logs_auditoria": len(logs),
+        },
+        "ordens_servico": [
+            {
+                "id": o.id,
+                "numero_os": o.numero_os,
+                "solicitante": o.solicitante,
+                "setor": o.setor,
+                "titulo": o.titulo,
+                "descricao": o.descricao,
+                "prioridade": o.prioridade,
+                "responsavel": o.responsavel,
+                "abertura": o.abertura,
+                "finalizacao": o.finalizacao,
+                "status": o.status,
+                "tempo_total": o.tempo_total,
+                "tipo_manutencao": o.tipo_manutencao,
+                "funcionarios": o.funcionarios,
+                "horas_trabalhadas": o.horas_trabalhadas,
+                "observacao_tecnica": o.observacao_tecnica,
+                "motivo_pausa": o.motivo_pausa,
+                "evidencias": listar_evidencias_ordem(o),
+            }
+            for o in ordens
+        ],
+        "itens_estoque": [
+            {
+                "id": p.id,
+                "codigo": p.codigo,
+                "nome": p.nome,
+                "categoria": p.categoria,
+                "localizacao": p.localizacao,
+                "quantidade": p.quantidade,
+                "estoque_minimo": p.estoque_minimo,
+                "ultima_atualizacao": p.ultima_atualizacao,
+            }
+            for p in estoque
+        ],
+        "historico_movimentacoes": [
+            {
+                "id": m.id,
+                "peca_codigo": m.peca_codigo,
+                "peca_nome": m.peca_nome,
+                "tipo": m.tipo,
+                "quantidade": m.quantidade,
+                "solicitante": m.solicitante,
+                "data_hora": m.data_hora,
+            }
+            for m in movs
+        ],
+        "maquinas_spare": [
+            {
+                "id": m.id,
+                "maquina": m.maquina,
+                "modelo": m.modelo,
+                "setor": m.setor,
+                "pecas_necessarias": m.pecas_necessarias,
+                "pecas": [
+                    {
+                        "id": ps.id,
+                        "nome_peca": ps.nome_peca,
+                        "codigo_peca": ps.codigo_peca,
+                        "quantidade": ps.quantidade,
+                        "observacao": ps.observacao,
+                    }
+                    for ps in m.pecas
+                ],
+            }
+            for m in maquinas
+        ],
+        "planos_preventivos": [
+            {
+                "id": pl.id,
+                "maquina": pl.maquina,
+                "codigo_maquina": pl.codigo_maquina,
+                "setor": pl.setor,
+                "atividade": pl.atividade,
+                "frequencia": pl.frequencia,
+                "responsavel": pl.responsavel,
+                "proxima_execucao": pl.proxima_execucao,
+                "status": pl.status,
+            }
+            for pl in planos
+        ],
+        "solicitacoes_compras": [
+            {
+                "id": sc.id,
+                "numero_sc": sc.numero_sc,
+                "tipo_sc": sc.tipo_sc,
+                "solicitante": sc.solicitante,
+                "setor_solicitante": sc.setor_solicitante,
+                "responsaveis_duvidas": sc.responsaveis_duvidas,
+                "centro_custo": sc.centro_custo,
+                "objeto_solicitacao": sc.objeto_solicitacao,
+                "data_solicitacao": sc.data_solicitacao,
+                "status_aprovacao": sc.status_aprovacao,
+                "itens": [
+                    {
+                        "id": it.id,
+                        "descritivo": it.descritivo,
+                        "quantidade": it.quantidade,
+                        "unidade": it.unidade,
+                        "link_referencia": it.link_referencia,
+                    }
+                    for it in sc.itens
+                ],
+            }
+            for sc in compras
+        ],
+        "logs_auditoria": [
+            {
+                "id": lg.id,
+                "data_hora": lg.data_hora,
+                "modulo": lg.modulo,
+                "acao": lg.acao,
+                "detalhes": lg.detalhes,
+            }
+            for lg in logs
+        ],
+    }
 
 
 # ==============================================================================
@@ -1309,7 +1581,7 @@ tr.detalhe p { white-space: pre-wrap; margin: 6px 0 0; overflow-wrap: break-word
 tr.sem-resultado { display: none; }
 .dica-mobile-card { display: none; }
 
-/* EVIDÊNCIA FOTOGRÁFICA */
+/* GALERIA DE MÚLTIPLAS EVIDÊNCIAS FOTOGRÁFICAS */
 .evidencia-box {
     margin-top: 12px;
     padding: 12px;
@@ -1317,16 +1589,35 @@ tr.sem-resultado { display: none; }
     border: 1px solid var(--bd);
     border-radius: 10px;
 }
-.evidencia-thumb {
-    display: block;
-    max-width: 280px;
-    max-height: 190px;
-    width: auto;
-    height: auto;
-    border-radius: 8px;
+.galeria-evidencias {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+.evidencia-item-card {
+    background: #0c0e12;
     border: 1px solid var(--bd);
-    margin-top: 8px;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.evidencia-item-card img {
+    width: 100%;
+    height: 135px;
     object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid #262a36;
+    display: block;
+}
+.evidencia-item-nome {
+    font-size: 11px;
+    color: var(--mt);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .preview-evidencia-box {
     margin-top: 10px;
@@ -1336,13 +1627,34 @@ tr.sem-resultado { display: none; }
     border-radius: 10px;
     display: none;
 }
-.preview-evidencia-box img {
-    display: block;
-    max-width: 240px;
-    max-height: 150px;
-    border-radius: 8px;
-    margin-top: 6px;
+.preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+}
+.preview-grid-item {
+    background: #14171f;
+    border: 1px solid var(--bd);
+    border-radius: 6px;
+    padding: 4px;
+    text-align: center;
+}
+.preview-grid-item img {
+    width: 100%;
+    height: 82px;
     object-fit: cover;
+    border-radius: 4px;
+    display: block;
+}
+.preview-grid-item span {
+    display: block;
+    font-size: 10px;
+    color: var(--mt);
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* BADGES E STATUS */
@@ -1445,7 +1757,7 @@ tr.sem-resultado { display: none; }
 .alerta-os-item span { font-size: 13.5px; font-weight: 700; color: var(--tx); overflow-wrap: break-word; }
 .alerta-os-item.full { grid-column: 1 / -1; }
 .modal {
-    width: 100%; max-width: 640px; max-height: 92vh; overflow-y: auto;
+    width: 100%; max-width: 680px; max-height: 92vh; overflow-y: auto;
     background: linear-gradient(175deg, #1b1f29, #101217);
     border: 1px solid rgba(249, 115, 22, 0.42);
     border-radius: 16px; padding: 24px;
@@ -1476,15 +1788,23 @@ tr.sem-resultado { display: none; }
 input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 
-/* LOGIN E COMPRAS */
+/* LOGIN SEM ALERTA DO GOOGLE PASSWORD MANAGER */
 .container-login { max-width: 430px; margin: 8vh auto; }
 .card-login {
     background: linear-gradient(175deg, var(--s2), var(--s1));
     border: 1px solid var(--bd); border-radius: var(--r); padding: 24px;
 }
-.card-login form { display: grid; gap: 14px; }
+.card-login .form-login-box { display: grid; gap: 14px; }
 .senha-wrap { position: relative; }
 .senha-wrap input { padding-right: 48px; }
+.campo-senha-mascarada {
+    -webkit-text-security: disc;
+    text-security: disc;
+}
+.campo-senha-mascarada.visivel {
+    -webkit-text-security: none;
+    text-security: none;
+}
 .olho { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; padding: 6px 10px; }
 .bloco-itens {
     border: 1px dashed rgba(249, 115, 22, 0.5); background: #0b0d11;
@@ -1513,7 +1833,6 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
         font-size: 14px;
     }
 
-    /* BARRA INFERIOR FIXA PARA NAVEGAÇÃO RÁPIDA COM O POLEGAR */
     .mobile-bottom-nav {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -1579,7 +1898,6 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     .relogio { flex: 1; text-align: center; font-size: 11.5px; padding: 7px 10px; }
     .cabecalho-lado .botao-sair { width: auto; padding: 7px 12px; min-height: 36px; }
 
-    /* SUB-ABAS COM ROLAGEM HORIZONTAL SUAVE */
     .sub-abas-nav {
         display: flex;
         flex-wrap: nowrap;
@@ -1611,7 +1929,6 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     details.card > summary { font-size: 15px; line-height: 1.35; min-height: 36px; }
     details.card > .conteudo { margin-top: 12px; padding-top: 12px; }
 
-    /* EVITA ZOOM AUTOMÁTICO NO IOS/ANDROID AO FOCAR INPUTS */
     input, textarea, select { font-size: 16px; padding: 11px 12px; min-height: 44px; }
     button, .botao { font-size: 13.5px; padding: 11px 14px; min-height: 44px; }
 
@@ -1639,7 +1956,6 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     .contagem { margin-left: 0; width: 100%; font-size: 12px; margin-top: 8px; display: block; }
     .dica-mobile-card { display: block; font-size: 12px; color: var(--mt); margin: -6px 0 12px; }
 
-    /* CONVERSÃO DE TABELAS PRINCIPAIS EM CARDS MOBILE SEM ROLAGEM LATERAL */
     .tabela-wrapper {
         border: 0;
         background: transparent;
@@ -1730,13 +2046,11 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
         display: block;
         width: 100%;
     }
-    .evidencia-thumb { max-width: 100%; width: 100%; max-height: 240px; }
+    .galeria-evidencias { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .select-status-sc { width: 100%; max-width: 190px; font-size: 13px; min-height: 38px; }
 
-    /* TABELAS SECUNDÁRIAS MANTÊM SCROLL SUAVE */
     table:not(.tabela-dinamica) { min-width: 560px; }
 
-    /* MODAIS EM ESTILO BOTTOM-SHEET NO MOBILE */
     .overlay, .overlay-alerta-os {
         padding: 0;
         align-items: flex-end;
@@ -1804,7 +2118,7 @@ window.toast=function(msg,tipo){
     t.append(s,x);caixa.appendChild(t);
     setTimeout(()=>t.remove(),5000);
 };
-(window.__FLASH__||[]).forEach((m,i)=>setTimeout(()=>window.toast(m,/erro|não|nao|inválid|insuficiente|incorret|obrigat/i.test(m)?'erro':'ok'),i*220));
+(window.__FLASH__||[]).forEach((m,i)=>setTimeout(()=>window.toast(m,/erro|não|nao|inválid|insuficiente|incorret|obrigat|excede|limite/i.test(m)?'erro':'ok'),i*220));
 
 /* ============================================================================
    SOM DE NOTIFICAÇÃO E POP-UP AO VIVO DE NOVA O.S. EM TODOS OS DISPOSITIVOS
@@ -2129,30 +2443,49 @@ $$('form').forEach(f=>{
     const h=document.createElement('input');h.type='hidden';h.name='csrf_token';h.value=window.__CSRF__||'';f.appendChild(h);
 });
 
-const verSenha=$('#verSenha');
-if(verSenha){verSenha.addEventListener('click',()=>{const s=$('#senha');if(s)s.type=s.type==='password'?'text':'password'})}
-
-/* HELPER REUTILIZÁVEL PARA PRÉVIA DE IMAGEM */
-function vincularPreviewImagem(inputEl, boxEl, imgEl, nomeEl){
-    let urlAtual = '';
+/* HELPER REUTILIZÁVEL PARA PRÉVIA DE MÚLTIPLAS IMAGENS */
+function vincularPreviewMultiplasImagens(inputEl, boxEl, gridEl, resumoEl){
+    let urlsAtuais = [];
     const limpar = () => {
         if (inputEl) inputEl.value = '';
-        if (urlAtual) { URL.revokeObjectURL(urlAtual); urlAtual = ''; }
-        if (imgEl) imgEl.src = '';
-        if (nomeEl) nomeEl.textContent = '';
+        urlsAtuais.forEach(u => URL.revokeObjectURL(u));
+        urlsAtuais = [];
+        if (gridEl) gridEl.innerHTML = '';
+        if (resumoEl) resumoEl.textContent = '';
         if (boxEl) boxEl.style.display = 'none';
     };
     if (inputEl) {
         inputEl.addEventListener('change', () => {
-            if (urlAtual) { URL.revokeObjectURL(urlAtual); urlAtual = ''; }
-            const arq = inputEl.files && inputEl.files[0];
-            if (!arq) {
+            urlsAtuais.forEach(u => URL.revokeObjectURL(u));
+            urlsAtuais = [];
+            if (gridEl) gridEl.innerHTML = '';
+
+            const arquivos = inputEl.files ? Array.from(inputEl.files) : [];
+            if (!arquivos.length) {
                 if (boxEl) boxEl.style.display = 'none';
                 return;
             }
-            urlAtual = URL.createObjectURL(arq);
-            if (imgEl) imgEl.src = urlAtual;
-            if (nomeEl) nomeEl.textContent = arq.name;
+            if (resumoEl) {
+                resumoEl.textContent = arquivos.length === 1
+                    ? '1 foto selecionada para envio:'
+                    : `${arquivos.length} fotos selecionadas para envio:`;
+            }
+            arquivos.forEach(arq => {
+                const url = URL.createObjectURL(arq);
+                urlsAtuais.push(url);
+                if (gridEl) {
+                    const card = document.createElement('div');
+                    card.className = 'preview-grid-item';
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.alt = arq.name;
+                    const cap = document.createElement('span');
+                    cap.textContent = arq.name;
+                    cap.title = arq.name;
+                    card.append(img, cap);
+                    gridEl.appendChild(card);
+                }
+            });
             if (boxEl) boxEl.style.display = 'block';
         });
     }
@@ -2162,11 +2495,11 @@ function vincularPreviewImagem(inputEl, boxEl, imgEl, nomeEl){
 const modalFinalizar = $('#modalFinalizar');
 if(modalFinalizar){
     const formFinalizar = $('#formFinalizar');
-    const limparPreviewEvidencia = vincularPreviewImagem(
+    const limparPreviewEvidencia = vincularPreviewMultiplasImagens(
         $('#evidenciaFotoInput'),
         $('#previewEvidenciaBox'),
-        $('#previewEvidenciaImg'),
-        $('#previewEvidenciaNome')
+        $('#previewEvidenciaGrid'),
+        $('#previewEvidenciaResumo')
     );
 
     $$('.btn-abrir-finalizar').forEach(btn => {
@@ -2190,19 +2523,18 @@ if(modalFinalizar){
     modalFinalizar.addEventListener('mousedown', e => { if(e.target === modalFinalizar) fecharFin(); });
 }
 
-/* MODAL DE GERENCIAR EVIDÊNCIA EM O.S. JÁ FINALIZADA */
+/* MODAL DE GERENCIAR MÚLTIPLAS EVIDÊNCIAS EM O.S. JÁ FINALIZADA */
 const modalEvidenciaOS = $('#modalEvidenciaOS');
 if(modalEvidenciaOS){
     const formEvidenciaOS = $('#formEvidenciaOS');
-    const formRemoverEvidenciaOS = $('#formRemoverEvidenciaOS');
+    const formRemoverTodasEv = $('#formRemoverEvidenciaOS');
     const boxAtual = $('#evidenciaAtualModalBox');
-    const imgAtual = $('#evidenciaAtualModalImg');
-    const nomeAtual = $('#evidenciaAtualModalNome');
-    const limparPreviewModalEv = vincularPreviewImagem(
+    const galeriaAtual = $('#galeriaEvidenciasModal');
+    const limparPreviewModalEv = vincularPreviewMultiplasImagens(
         $('#evidenciaModalInput'),
         $('#previewModalEvBox'),
-        $('#previewModalEvImg'),
-        $('#previewModalEvNome')
+        $('#previewModalEvGrid'),
+        $('#previewModalEvResumo')
     );
 
     $$('.btn-gerenciar-evidencia').forEach(btn => {
@@ -2210,22 +2542,71 @@ if(modalEvidenciaOS){
             formEvidenciaOS.action = btn.dataset.url;
             $('#osNumeroEvidencia').textContent = btn.dataset.numero || '';
             limparPreviewModalEv();
+            galeriaAtual.innerHTML = '';
 
-            const temImg = btn.dataset.imgUrl && btn.dataset.imgUrl.trim() !== '';
-            if (temImg) {
-                imgAtual.src = btn.dataset.imgUrl;
-                nomeAtual.textContent = btn.dataset.imgNome || 'Evidência anexada';
+            let lista = [];
+            try {
+                lista = JSON.parse(btn.dataset.evidencias || '[]');
+            } catch(_e) {
+                lista = [];
+            }
+
+            if (Array.isArray(lista) && lista.length > 0) {
                 boxAtual.style.display = 'block';
-                if (formRemoverEvidenciaOS && btn.dataset.removeUrl) {
-                    formRemoverEvidenciaOS.action = btn.dataset.removeUrl;
-                    formRemoverEvidenciaOS.style.display = 'inline-flex';
+                const osId = btn.dataset.osId || '';
+                lista.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'evidencia-item-card';
+
+                    const link = document.createElement('a');
+                    link.href = item.url;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+
+                    const img = document.createElement('img');
+                    img.src = item.url;
+                    img.alt = item.nome || item.arquivo;
+                    link.appendChild(img);
+
+                    const cap = document.createElement('span');
+                    cap.className = 'evidencia-item-nome';
+                    cap.textContent = item.nome || item.arquivo;
+                    cap.title = item.nome || item.arquivo;
+
+                    const fRm = document.createElement('form');
+                    fRm.method = 'POST';
+                    fRm.action = `/os/evidencia-remover-item/${osId}`;
+                    fRm.style.margin = '0';
+
+                    const hCsrf = document.createElement('input');
+                    hCsrf.type = 'hidden';
+                    hCsrf.name = 'csrf_token';
+                    hCsrf.value = window.__CSRF__ || '';
+
+                    const hArq = document.createElement('input');
+                    hArq.type = 'hidden';
+                    hArq.name = 'arquivo';
+                    hArq.value = item.arquivo;
+
+                    const bRm = document.createElement('button');
+                    bRm.type = 'submit';
+                    bRm.className = 'excluir';
+                    bRm.style.cssText = 'width:100%;padding:5px 8px;font-size:11px;min-height:32px';
+                    bRm.textContent = '✕ Remover esta foto';
+
+                    fRm.append(hCsrf, hArq, bRm);
+                    card.append(link, cap, fRm);
+                    galeriaAtual.appendChild(card);
+                });
+
+                if (formRemoverTodasEv && btn.dataset.removeUrl) {
+                    formRemoverTodasEv.action = btn.dataset.removeUrl;
+                    formRemoverTodasEv.style.display = 'inline-flex';
                 }
             } else {
-                imgAtual.src = '';
-                nomeAtual.textContent = '';
                 boxAtual.style.display = 'none';
-                if (formRemoverEvidenciaOS) {
-                    formRemoverEvidenciaOS.style.display = 'none';
+                if (formRemoverTodasEv) {
+                    formRemoverTodasEv.style.display = 'none';
                 }
             }
             modalEvidenciaOS.classList.add('aberto');
@@ -2450,7 +2831,7 @@ HTML_OS = r"""
 
 <section class="card">
     <h2>Ordens de Serviço Registradas</h2>
-    <p class="dica-mobile-card">💡 Toque em qualquer cartão de O.S. para ver descrição, laudo técnico e fotos.</p>
+    <p class="dica-mobile-card">💡 Toque em qualquer cartão de O.S. para ver descrição, laudo técnico e galeria de fotos.</p>
     <div class="tabela-wrapper">
         <table id="tabelaOS" class="tabela-dinamica detalhavel">
             <thead>
@@ -2472,8 +2853,9 @@ HTML_OS = r"""
             <tbody>
             {% for os in ordens %}
                 {% set st_code = 'finalizada' if os.status=='Finalizada' else ('aguardando' if os.status=='Aguardando Peça' else 'aberta') %}
+                {% set lista_ev = os.evidencias_lista %}
                 <tr class="linha" data-status="{{st_code}}" data-prioridade="{{os.prioridade|lower|replace('í','i')|replace('é','e')}}">
-                    <td data-label="OS"><strong>{{os.numero_os}}{% if os.evidencia_imagem %} 📷{% endif %}</strong></td>
+                    <td data-label="OS"><strong>{{os.numero_os}}{% if lista_ev %} 📷 ({{lista_ev|length}}){% endif %}</strong></td>
                     <td data-label="Solicitante">{{os.solicitante}}</td>
                     <td data-label="Máquina / Setor" style="max-width:190px">{{os.setor or '-'}}</td>
                     <td data-label="Causa" style="max-width:240px">{{os.titulo or '-'}}</td>
@@ -2495,12 +2877,12 @@ HTML_OS = r"""
                             <button type="button" class="pausar btn-abrir-pausar" data-url="{{url_for('pausar_os',id=os.id)}}" data-numero="{{os.numero_os}}" data-motivo="{{os.motivo_pausa}}" title="Pausar por falta de peça ou retomar">⏳ Espera</button>
                             {% else %}
                             <button type="button" class="evidencia-btn btn-gerenciar-evidencia"
+                                data-os-id="{{os.id}}"
                                 data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
                                 data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
                                 data-numero="{{os.numero_os}}"
-                                data-img-url="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem) if os.evidencia_imagem else ''}}"
-                                data-img-nome="{{os.evidencia_nome or os.evidencia_imagem}}"
-                                title="Anexar ou alterar foto de evidência">📷 {{ 'Trocar Foto' if os.evidencia_imagem else '+ Evidência' }}</button>
+                                data-evidencias='{{lista_ev|tojson}}'
+                                title="Anexar ou gerenciar fotos de evidência">📷 {{ 'Fotos (' ~ (lista_ev|length) ~ ')' if lista_ev else '+ Evidências' }}</button>
                             {% endif %}
                             <a href="{{url_for('imprimir_os',id=os.id)}}" target="_blank" class="botao imprimir" title="Imprimir O.S. em A4">🖨️ A4</a>
                             <form action="{{url_for('excluir',id=os.id)}}" method="POST" data-perigo="1" data-confirm="Tem certeza que deseja excluir permanentemente a O.S. {{os.numero_os}}?" data-confirm-btn="Excluir">
@@ -2522,36 +2904,39 @@ HTML_OS = r"""
                         {% if os.funcionarios %}
                         <p style="margin-top:8px"><strong>Executantes:</strong> {{os.funcionarios}} &nbsp;|&nbsp; <strong>Horas Apontadas:</strong> {{fmt_hhmm(os.horas_trabalhadas)}}</p>
                         {% endif %}
-                        {% if os.evidencia_imagem %}
+                        {% if lista_ev %}
                         <div class="evidencia-box">
                             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-                                <strong style="color:#60a5fa">📷 Evidência do Trabalho Feito:</strong>
-                                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                                    <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer" class="botao imprimir" style="padding:6px 10px;font-size:12px">🔍 Foto Completa</a>
-                                    {% if os.status=='Finalizada' %}
-                                    <button type="button" class="evidencia-btn btn-gerenciar-evidencia" style="padding:6px 10px;font-size:12px"
-                                        data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
-                                        data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
-                                        data-numero="{{os.numero_os}}"
-                                        data-img-url="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}"
-                                        data-img-nome="{{os.evidencia_nome or os.evidencia_imagem}}">🔄 Trocar / Remover</button>
-                                    {% endif %}
-                                </div>
+                                <strong style="color:#60a5fa">📷 Evidências do Trabalho Feito ({{lista_ev|length}} foto(s)):</strong>
+                                {% if os.status=='Finalizada' %}
+                                <button type="button" class="evidencia-btn btn-gerenciar-evidencia" style="padding:6px 10px;font-size:12px"
+                                    data-os-id="{{os.id}}"
+                                    data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
+                                    data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
+                                    data-numero="{{os.numero_os}}"
+                                    data-evidencias='{{lista_ev|tojson}}'>➕ Adicionar / Gerenciar Fotos</button>
+                                {% endif %}
                             </div>
-                            <span class="muted" style="display:block;margin-top:4px">{{os.evidencia_nome or os.evidencia_imagem}}</span>
-                            <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer">
-                                <img src="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" alt="Evidência da O.S. {{os.numero_os}}" class="evidencia-thumb">
-                            </a>
+                            <div class="galeria-evidencias">
+                                {% for ev in lista_ev %}
+                                <div class="evidencia-item-card">
+                                    <a href="{{ev.url}}" target="_blank" rel="noopener noreferrer" title="Abrir {{ev.nome}} em tamanho original">
+                                        <img src="{{ev.url}}" alt="Evidência {{loop.index}} da O.S. {{os.numero_os}}">
+                                    </a>
+                                    <span class="evidencia-item-nome" title="{{ev.nome}}">{{loop.index}}. {{ev.nome}}</span>
+                                </div>
+                                {% endfor %}
+                            </div>
                         </div>
                         {% elif os.status=='Finalizada' %}
                         <div class="evidencia-box" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
                             <span class="muted">Nenhuma foto de evidência anexada a esta O.S. finalizada.</span>
                             <button type="button" class="evidencia-btn btn-gerenciar-evidencia" style="padding:7px 12px;font-size:12px"
+                                data-os-id="{{os.id}}"
                                 data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
                                 data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
                                 data-numero="{{os.numero_os}}"
-                                data-img-url=""
-                                data-img-nome="">📷 Adicionar Foto de Evidência</button>
+                                data-evidencias='[]'>📷 Adicionar Fotos de Evidência</button>
                         </div>
                         {% endif %}
                     </td>
@@ -2576,7 +2961,7 @@ HTML_OS = r"""
 <div class="overlay" id="modalFinalizar">
     <div class="modal">
         <h3>🔧 Finalizar Ordem de Serviço <span id="osNumeroFinalizar"></span></h3>
-        <p class="muted">Registre o apontamento de horas, equipe envolvida, solução aplicada e foto de evidência.</p>
+        <p class="muted">Registre o apontamento de horas, equipe envolvida, solução aplicada e fotos de evidência.</p>
         <form id="formFinalizar" method="POST" enctype="multipart/form-data">
             <div class="campo">
                 <label>Tipo de Manutenção *</label>
@@ -2605,11 +2990,11 @@ HTML_OS = r"""
                 <textarea name="observacao_tecnica" id="obsTecnica" rows="3" placeholder="Descreva o que foi reparado, ajustado ou substituído..."></textarea>
             </div>
             <div class="campo">
-                <label>📷 Evidência do Trabalho Feito (Foto / Câmera — PNG, JPG, WEBP até 6 MB)</label>
-                <input type="file" name="evidencia_foto" id="evidenciaFotoInput" accept="image/png,image/jpeg,image/webp" capture="environment">
+                <label>📷 Evidências do Trabalho Feito (Selecione 1 ou mais fotos — PNG, JPG, WEBP até 6 MB cada)</label>
+                <input type="file" name="evidencia_foto" id="evidenciaFotoInput" accept="image/png,image/jpeg,image/webp" multiple>
                 <div class="preview-evidencia-box" id="previewEvidenciaBox">
-                    <span class="muted" id="previewEvidenciaNome"></span>
-                    <img id="previewEvidenciaImg" src="" alt="Prévia da evidência">
+                    <span class="muted" id="previewEvidenciaResumo"></span>
+                    <div class="preview-grid" id="previewEvidenciaGrid"></div>
                 </div>
             </div>
             {% if pecas_estoque %}
@@ -2637,35 +3022,34 @@ HTML_OS = r"""
     </div>
 </div>
 
-<!-- MODAL PARA ANEXAR / TROCAR / REMOVER EVIDÊNCIA EM O.S. FINALIZADA -->
+<!-- MODAL PARA ADICIONAR / GERENCIAR MÚLTIPLAS EVIDÊNCIAS EM O.S. FINALIZADA -->
 <div class="overlay" id="modalEvidenciaOS">
     <div class="modal">
-        <h3>📷 Evidência Fotográfica — O.S. <span id="osNumeroEvidencia"></span></h3>
-        <p class="muted">Anexe ou atualize a foto comprobatória do serviço concluído (PNG, JPG ou WEBP até 6 MB).</p>
+        <h3>📷 Galeria de Evidências — O.S. <span id="osNumeroEvidencia"></span></h3>
+        <p class="muted">Adicione uma ou mais fotos comprobatórias do serviço concluído (até {{max_fotos_os}} fotos por O.S., máx. 6 MB cada).</p>
 
         <div class="evidencia-box" id="evidenciaAtualModalBox" style="display:none;margin-bottom:14px">
-            <strong style="color:#4ade80;font-size:12.5px">Evidência Atual Registrada:</strong>
-            <span class="muted" id="evidenciaAtualModalNome" style="display:block;margin-top:3px"></span>
-            <img id="evidenciaAtualModalImg" src="" alt="Evidência atual" class="evidencia-thumb">
+            <strong style="color:#4ade80;font-size:12.5px">Fotos Já Anexadas nesta O.S.:</strong>
+            <div class="galeria-evidencias" id="galeriaEvidenciasModal"></div>
         </div>
 
         <form id="formEvidenciaOS" method="POST" enctype="multipart/form-data">
             <div class="campo">
-                <label>Selecionar ou Tirar Foto *</label>
-                <input type="file" name="evidencia_foto" id="evidenciaModalInput" accept="image/png,image/jpeg,image/webp" capture="environment" required>
+                <label>Adicionar Novas Fotos (selecione 1 ou várias imagens) *</label>
+                <input type="file" name="evidencia_foto" id="evidenciaModalInput" accept="image/png,image/jpeg,image/webp" multiple required>
                 <div class="preview-evidencia-box" id="previewModalEvBox">
-                    <span class="muted" id="previewModalEvNome"></span>
-                    <img id="previewModalEvImg" src="" alt="Prévia da nova evidência">
+                    <span class="muted" id="previewModalEvResumo"></span>
+                    <div class="preview-grid" id="previewModalEvGrid"></div>
                 </div>
             </div>
             <div class="modal-acoes">
-                <button type="button" class="limpar" data-fechar-evidencia>Cancelar</button>
-                <button type="submit" class="salvar">💾 Salvar Evidência</button>
+                <button type="button" class="limpar" data-fechar-evidencia>Fechar</button>
+                <button type="submit" class="salvar">💾 Enviar Fotos</button>
             </div>
         </form>
 
-        <form id="formRemoverEvidenciaOS" method="POST" style="display:none;margin-top:10px;width:100%" data-perigo="1" data-confirm="Deseja remover permanentemente a foto de evidência desta O.S.?" data-confirm-btn="Remover Foto">
-            <button type="submit" class="excluir" style="width:100%">🗑️ Remover Evidência Atual</button>
+        <form id="formRemoverEvidenciaOS" method="POST" style="display:none;margin-top:10px;width:100%" data-perigo="1" data-confirm="Deseja remover permanentemente TODAS as fotos de evidência desta O.S.?" data-confirm-btn="Remover Todas">
+            <button type="submit" class="excluir" style="width:100%">🗑️ Remover Todas as Fotos</button>
         </form>
     </div>
 </div>
@@ -2699,7 +3083,95 @@ HTML_OS = r"""
 """
 
 HTML_LOGIN_SISTEMA = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a><a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login">
+<div class="container-login">
+    <div class="cabecalho" style="justify-content:center;text-align:center">
+        <div class="cabecalho-principal">
+            <h1>🔒 ÁREA RESTRITA</h1>
+            <p>Digite as credenciais para acessar a Central de Gestão</p>
+        </div>
+    </div>
+    <div class="card-login">
+        <div class="form-login-box" id="boxLoginAcesso">
+            <div class="campo">
+                <label>Usuário</label>
+                <input type="text" id="campoUsuarioLogin" required autofocus autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" placeholder="Digite o usuário">
+            </div>
+            <div class="campo">
+                <label>Senha</label>
+                <div class="senha-wrap">
+                    <input type="text" id="campoSenhaLogin" class="campo-senha-mascarada" required autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" placeholder="Digite a senha">
+                    <button type="button" class="olho" id="verSenhaLogin" title="Mostrar/Ocultar senha">👁️</button>
+                </div>
+            </div>
+            <button class="salvar" type="button" id="btnEntrarGestao">Entrar na Central</button>
+            <a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a>
+            <a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a>
+        </div>
+    </div>
+</div>
+<script>
+window.__FLASH__={{flash_msgs|tojson}};
+window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};
+document.addEventListener('DOMContentLoaded', function(){
+    const inpUser = document.getElementById('campoUsuarioLogin');
+    const inpPass = document.getElementById('campoSenhaLogin');
+    const btnOlho = document.getElementById('verSenhaLogin');
+    const btnEntrar = document.getElementById('btnEntrarGestao');
+
+    if (btnOlho && inpPass) {
+        btnOlho.addEventListener('click', function(){
+            inpPass.classList.toggle('visivel');
+        });
+    }
+
+    async function autenticarSemPopup(){
+        const u = (inpUser.value || '').trim();
+        const s = (inpPass.value || '').trim();
+        if (!u || !s) {
+            window.toast('Preencha usuário e senha.', 'erro');
+            return;
+        }
+        btnEntrar.disabled = true;
+        btnEntrar.textContent = 'Validando...';
+        try {
+            const resp = await fetch("{{url_for('login_sistema')}}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': window.__CSRF__ || ''
+                },
+                body: JSON.stringify({ usuario: u, senha: s })
+            });
+            const data = await resp.json();
+            if (resp.ok && data.ok) {
+                inpUser.value = '';
+                inpPass.value = '';
+                window.location.replace(data.redirect || "{{url_for('central_gestao')}}");
+                return;
+            }
+            window.toast(data.erro || 'Usuário ou senha incorretos.', 'erro');
+        } catch (_e) {
+            window.toast('Erro de conexão ao validar acesso.', 'erro');
+        } finally {
+            btnEntrar.disabled = false;
+            btnEntrar.textContent = 'Entrar na Central';
+        }
+    }
+
+    btnEntrar?.addEventListener('click', autenticarSemPopup);
+    [inpUser, inpPass].forEach(el => {
+        el?.addEventListener('keydown', function(e){
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                autenticarSemPopup();
+            }
+        });
+    });
+});
+</script>
+<script>{{js|safe}}</script></body></html>
 """
 
 HTML_CENTRAL_GESTAO = r"""
@@ -3249,22 +3721,31 @@ HTML_CENTRAL_GESTAO = r"""
     </section>
 </div>
 
-<!-- ================= 6. GOVERNANÇA ================= -->
+<!-- ================= 6. BACKUP & AUDITORIA ================= -->
 <div id="secao-governanca" class="painel-secao">
     <section class="card">
-        <h2>💾 Segurança e Backup do Banco de Dados</h2>
-        {% if is_postgres %}
-        <p class="muted">Banco em nuvem PostgreSQL ativo via <code>DATABASE_URL</code> (Neon). Backups e snapshots são gerenciados no painel da Neon.</p>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
-            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Motor: PostgreSQL (Nuvem)</span>
+        <h2>💾 Cópia de Segurança e Exportação Completa do Banco de Dados</h2>
+        <p class="muted" style="margin-top:0">
+            Exporte uma cópia integral de todos os registros do sistema (Ordens de Serviço, Estoque, Movimentações, Spare Parts, PCM, Solicitações de Compra e Auditoria) para armazenamento externo seguro.
+        </p>
+
+        <div class="resumo" style="margin:16px 0">
+            <div class="resumo-card"><span class="icone">🗄️</span><span>Motor Ativo</span><strong style="font-size:20px">{{ 'PostgreSQL' if is_postgres else 'SQLite Local' }}</strong><small>{{ 'Nuvem Neon' if is_postgres else (tamanho_db ~ ' KB') }}</small></div>
+            <div class="resumo-card"><span class="icone">📋</span><span>O.S. Salvas</span><strong>{{resumo_banco.ordens}}</strong><small>Histórico completo</small></div>
+            <div class="resumo-card"><span class="icone">🔩</span><span>Itens & Ativos</span><strong>{{resumo_banco.estoque + resumo_banco.maquinas}}</strong><small>{{resumo_banco.estoque}} SKUs • {{resumo_banco.maquinas}} Máq.</small></div>
+            <div class="resumo-card"><span class="icone">📅</span><span>PCM & Compras</span><strong>{{resumo_banco.planos + resumo_banco.compras}}</strong><small>{{resumo_banco.planos}} Planos • {{resumo_banco.compras}} S.C.</small></div>
         </div>
-        {% else %}
-        <p class="muted">Gerenciamento e cópias de segurança do banco SQLite local (<code>os.db</code>).</p>
+
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
-            <a href="{{url_for('baixar_backup_db')}}" class="botao excel">⬇ Baixar Cópia Completa do Banco (.db)</a>
-            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Tamanho: {{tamanho_db}} KB | {{backups_locais}} backup(s) automático(s)</span>
+            <a href="{{url_for('exportar_backup_json')}}" class="botao salvar">📦 Exportar Banco Completo (.JSON)</a>
+            <a href="{{url_for('exportar_backup_excel_completo')}}" class="botao excel">📊 Exportar Planilha Geral Multi-Abas (.XLSX)</a>
+            {% if not is_postgres %}
+            <a href="{{url_for('baixar_backup_db')}}" class="botao imprimir">💾 Baixar Arquivo Bruto SQLite (.DB)</a>
+            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ {{backups_locais}} snapshot(s) diário(s) em /backups</span>
+            {% else %}
+            <span class="status estoque-ok" style="display:inline-flex;align-items:center">✔ Persistência em Nuvem Ativa</span>
+            {% endif %}
         </div>
-        {% endif %}
     </section>
 
     <section class="card">
@@ -3495,8 +3976,9 @@ th { background: #f0f0f0; font-size: 11px; font-weight: bold; width: 22%; }
 .area { min-height: 55px; white-space: pre-wrap; }
 .area-grande { min-height: 75px; white-space: pre-wrap; }
 .secao-titulo { font-weight: bold; font-size: 12px; background: #e5e7eb; padding: 5px 8px; border: 1px solid #333; margin-bottom: -1px; }
-.evidencia-print { border: 1px solid #333; padding: 8px; margin-bottom: 10px; background: #fafafa; text-align: center; }
-.evidencia-print img { max-width: 100%; max-height: 210px; height: auto; border: 1px solid #666; }
+.evidencia-print-grid { border: 1px solid #333; padding: 8px; margin-bottom: 10px; background: #fafafa; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.evidencia-print-item { text-align: center; border: 1px solid #ccc; padding: 4px; background: #fff; page-break-inside: avoid; }
+.evidencia-print-item img { max-width: 100%; max-height: 175px; height: auto; }
 .check-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 8px; border: 1px solid #333; margin-bottom: 10px; background: #fafafa; font-size: 11px; }
 .check-item { display: flex; align-items: center; gap: 6px; }
 .assinaturas { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 22px; text-align: center; }
@@ -3529,11 +4011,16 @@ th { background: #f0f0f0; font-size: 11px; font-weight: bold; width: 22%; }
             <tr><th>Equipe Executante</th><td>{{os.funcionarios or '___________________________'}}</td><th>Tempo Apontado</th><td>{{fmt_hhmm(os.horas_trabalhadas) if os.horas_trabalhadas else '____h ____min'}}</td></tr>
             <tr><th>Laudo Técnico / Serviço Efetuado</th><td colspan="3" class="area-grande">{{os.observacao_tecnica or ''}}</td></tr>
         </table>
-        {% if os.evidencia_imagem %}
-        <div class="secao-titulo">EVIDÊNCIA FOTOGRÁFICA DO SERVIÇO EXECUTADO</div>
-        <div class="evidencia-print">
-            <img src="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" alt="Evidência da O.S. {{os.numero_os}}">
-            <div style="font-size:10px;color:#444;margin-top:4px">Arquivo: {{os.evidencia_nome or os.evidencia_imagem}}</div>
+        {% set lista_ev = os.evidencias_lista %}
+        {% if lista_ev %}
+        <div class="secao-titulo">EVIDÊNCIAS FOTOGRÁFICAS DO SERVIÇO EXECUTADO ({{lista_ev|length}})</div>
+        <div class="evidencia-print-grid">
+            {% for ev in lista_ev %}
+            <div class="evidencia-print-item">
+                <img src="{{ev.url}}" alt="Evidência {{loop.index}} da O.S. {{os.numero_os}}">
+                <div style="font-size:9.5px;color:#444;margin-top:3px">{{loop.index}}. {{ev.nome}}</div>
+            </div>
+            {% endfor %}
         </div>
         {% endif %}
         <div class="secao-titulo">3. CHECK-LIST DE LIBERAÇÃO E SEGURANÇA (LOTO)</div>
@@ -3673,32 +4160,61 @@ def requer_login(f):
 @app.route("/login", methods=["GET", "POST"])
 def login_sistema():
     if request.method == "POST":
+        eh_ajax = (
+            request.is_json
+            or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        )
         ip = request.remote_addr or "?"
         agora = time.time()
         falhas, desde = tentativas_login.get(ip, (0, agora))
         if agora - desde >= BLOQUEIO_LOGIN_SEG:
             falhas, desde = 0, agora
         if falhas >= MAX_TENTATIVAS_LOGIN:
-            flash("Muitas tentativas incorretas. Aguarde alguns minutos.")
+            msg_bloq = "Muitas tentativas incorretas. Aguarde alguns minutos."
+            if eh_ajax:
+                return jsonify({"ok": False, "erro": msg_bloq}), 429
+            flash(msg_bloq)
             return renderizar(
                 HTML_LOGIN_SISTEMA,
                 ultimo_os_id=(
                     db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
                 ),
             )
-        usuario = request.form.get("usuario", "").strip()
-        senha = request.form.get("senha", "").strip()
+
+        payload = request.get_json(silent=True) if request.is_json else {}
+        usuario = (
+            (payload.get("usuario") if isinstance(payload, dict) else None)
+            or request.form.get("usuario", "")
+        ).strip()
+        senha = (
+            (payload.get("senha") if isinstance(payload, dict) else None)
+            or request.form.get("senha", "")
+        ).strip()
+
         ok_u = hmac.compare_digest(usuario.encode(), SISTEMA_USUARIO.encode())
         ok_s = hmac.compare_digest(senha.encode(), SISTEMA_SENHA.encode())
         if ok_u and ok_s:
             tentativas_login.pop(ip, None)
             session["logado_sistema"] = True
             session.permanent = True
-            registrar_auditoria("Governança", "Login", f"Acesso à Central por IP {ip}")
+            registrar_auditoria(
+                "Governança", "Login", f"Acesso à Central por IP {ip}"
+            )
             flash("Login realizado com sucesso!")
+            if eh_ajax:
+                return jsonify(
+                    {"ok": True, "redirect": url_for("central_gestao")}
+                )
             return redirect(url_for("central_gestao"))
+
         tentativas_login[ip] = (falhas + 1, desde)
+        if eh_ajax:
+            return (
+                jsonify({"ok": False, "erro": "Usuário ou senha incorretos."}),
+                401,
+            )
         flash("Usuário ou senha incorretos.")
+
     ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
     return renderizar(HTML_LOGIN_SISTEMA, ultimo_os_id=ultimo_os_id)
 
@@ -3736,34 +4252,69 @@ def atualizar_evidencia_os(id):
         flash("Ordem de Serviço inválida ou ainda não finalizada.")
         return redirect(url_for("dashboard"))
 
-    arquivo_evidencia = request.files.get("evidencia_foto")
-    if not arquivo_evidencia or not arquivo_evidencia.filename:
-        flash("Selecione uma imagem para anexar como evidência.")
-        return redirect(url_for("dashboard"))
-
-    ev_arquivo, ev_nome, erro_ev = salvar_evidencia_os(
-        arquivo_evidencia, ordem.numero_os
+    existentes = listar_evidencias_ordem(ordem)
+    arquivos = request.files.getlist("evidencia_foto")
+    novos, erro_ev = salvar_multiplas_evidencias_os(
+        arquivos, ordem.numero_os, existentes=len(existentes)
     )
     if erro_ev:
         flash(erro_ev)
         return redirect(url_for("dashboard"))
+    if not novos:
+        flash("Selecione pelo menos uma imagem para anexar como evidência.")
+        return redirect(url_for("dashboard"))
 
     try:
-        ev_antiga = ordem.evidencia_imagem
-        ordem.evidencia_imagem = ev_arquivo
-        ordem.evidencia_nome = ev_nome
+        todos = existentes + novos
+        gravar_evidencias_ordem(ordem, todos)
         db.session.commit()
-        remover_evidencia_os(ev_antiga)
         registrar_auditoria(
             "Ordens de Serviço",
-            "Evidência O.S. Atualizada",
-            f"O.S. {ordem.numero_os} recebeu foto de evidência ({ev_nome})",
+            "Evidências O.S. Adicionadas",
+            f"O.S. {ordem.numero_os} recebeu +{len(novos)} foto(s) (total: {len(todos)})",
         )
-        flash(f"Evidência da O.S. {ordem.numero_os} salva com sucesso!")
+        flash(
+            f"{len(novos)} foto(s) adicionada(s) à O.S. {ordem.numero_os}!"
+        )
     except Exception:
         db.session.rollback()
-        remover_evidencia_os(ev_arquivo)
-        flash("Erro ao salvar a evidência fotográfica.")
+        for item in novos:
+            remover_evidencia_os(item["arquivo"])
+        flash("Erro ao salvar as evidências fotográficas.")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/os/evidencia-remover-item/<int:id>", methods=["POST"])
+def remover_evidencia_item_rota(id):
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem:
+        flash("Ordem de Serviço não encontrada.")
+        return redirect(url_for("dashboard"))
+
+    alvo = os.path.basename(request.form.get("arquivo", "").strip())
+    if not alvo:
+        flash("Foto inválida.")
+        return redirect(url_for("dashboard"))
+
+    existentes = listar_evidencias_ordem(ordem)
+    restantes = [item for item in existentes if item["arquivo"] != alvo]
+    if len(restantes) == len(existentes):
+        flash("Foto não encontrada nesta O.S.")
+        return redirect(url_for("dashboard"))
+
+    try:
+        gravar_evidencias_ordem(ordem, restantes)
+        db.session.commit()
+        remover_evidencia_os(alvo)
+        registrar_auditoria(
+            "Ordens de Serviço",
+            "Foto Evidência Removida",
+            f"Foto removida da O.S. {ordem.numero_os} ({len(restantes)} restante(s))",
+        )
+        flash(f"Foto removida da O.S. {ordem.numero_os}.")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao remover a foto.")
     return redirect(url_for("dashboard"))
 
 
@@ -3776,19 +4327,18 @@ def remover_evidencia_rota(id):
 
     try:
         ev_antiga = ordem.evidencia_imagem
-        ordem.evidencia_imagem = ""
-        ordem.evidencia_nome = ""
+        gravar_evidencias_ordem(ordem, [])
         db.session.commit()
         remover_evidencia_os(ev_antiga)
         registrar_auditoria(
             "Ordens de Serviço",
-            "Evidência O.S. Removida",
-            f"Foto de evidência removida da O.S. {ordem.numero_os}",
+            "Evidências O.S. Removidas",
+            f"Todas as fotos de evidência foram removidas da O.S. {ordem.numero_os}",
         )
-        flash(f"Evidência da O.S. {ordem.numero_os} removida.")
+        flash(f"Todas as evidências da O.S. {ordem.numero_os} foram removidas.")
     except Exception:
         db.session.rollback()
-        flash("Erro ao remover evidência.")
+        flash("Erro ao remover evidências.")
     return redirect(url_for("dashboard"))
 
 
@@ -3833,23 +4383,286 @@ def api_os_novas():
 def baixar_backup_db():
     if IS_POSTGRES or not os.path.exists(DB_PATH):
         flash("Backup direto em .db disponível apenas no modo SQLite local.")
-        return redirect(url_for("central_gestao"))
+        return redirect(url_for("central_gestao", tab="governanca"))
     db.session.commit()
     registrar_auditoria(
-        "Governança", "Download Backup", "Cópia completa os.db exportada."
+        "Governança", "Download Backup DB", "Cópia completa os.db exportada."
     )
     nome = f"backup_manutencao_jamaica_{datetime.now():%Y%m%d_%H%M%S}.db"
     return send_file(DB_PATH, as_attachment=True, download_name=nome)
 
 
+@app.route("/governanca/exportar-json")
+@requer_login
+def exportar_backup_json():
+    pacote = serializar_banco_completo()
+    conteudo = json.dumps(pacote, ensure_ascii=False, indent=2).encode("utf-8")
+    memoria = BytesIO(conteudo)
+    memoria.seek(0)
+    registrar_auditoria(
+        "Governança",
+        "Exportação Backup JSON",
+        "Cópia integral do banco de dados exportada em JSON.",
+    )
+    nome = f"backup_completo_jamaica_{datetime.now():%Y%m%d_%H%M%S}.json"
+    return send_file(
+        memoria,
+        as_attachment=True,
+        download_name=nome,
+        mimetype="application/json",
+    )
+
+
+@app.route("/governanca/exportar-excel-completo")
+@requer_login
+def exportar_backup_excel_completo():
+    ordens = OrdemServico.query.order_by(OrdemServico.id.asc()).all()
+    df_os = pd.DataFrame(
+        [
+            {
+                "OS": o.numero_os,
+                "Solicitante": o.solicitante,
+                "Máquina / Setor": o.setor or "",
+                "Causa": o.titulo or "",
+                "Descrição": o.descricao or "",
+                "Laudo Técnico": o.observacao_tecnica or "",
+                "Qtd Evidências": len(listar_evidencias_ordem(o)),
+                "Arquivos Evidência": ", ".join(
+                    e["nome"] for e in listar_evidencias_ordem(o)
+                ),
+                "Prioridade": o.prioridade,
+                "Responsável": o.responsavel or "",
+                "Tipo": o.tipo_manutencao or "",
+                "Executantes": o.funcionarios or "",
+                "Horas": o.horas_trabalhadas or 0.0,
+                "Status": o.status,
+                "Abertura": o.abertura,
+                "Finalização": o.finalizacao or "",
+                "Lead Time": o.tempo_total or "",
+            }
+            for o in ordens
+        ],
+        columns=[
+            "OS",
+            "Solicitante",
+            "Máquina / Setor",
+            "Causa",
+            "Descrição",
+            "Laudo Técnico",
+            "Qtd Evidências",
+            "Arquivos Evidência",
+            "Prioridade",
+            "Responsável",
+            "Tipo",
+            "Executantes",
+            "Horas",
+            "Status",
+            "Abertura",
+            "Finalização",
+            "Lead Time",
+        ],
+    )
+
+    pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
+    df_est = pd.DataFrame(
+        [
+            {
+                "Código": p.codigo,
+                "Peça": p.nome,
+                "Categoria": p.categoria,
+                "Localização": p.localizacao,
+                "Saldo": p.quantidade,
+                "Mínimo": p.estoque_minimo,
+                "Status": (
+                    "Baixo Estoque"
+                    if p.quantidade <= p.estoque_minimo
+                    else "Normal"
+                ),
+                "Última Atualização": p.ultima_atualizacao,
+            }
+            for p in pecas
+        ],
+        columns=[
+            "Código",
+            "Peça",
+            "Categoria",
+            "Localização",
+            "Saldo",
+            "Mínimo",
+            "Status",
+            "Última Atualização",
+        ],
+    )
+
+    movs = HistoricoMovimentacao.query.order_by(
+        HistoricoMovimentacao.id.desc()
+    ).all()
+    df_mov = pd.DataFrame(
+        [
+            {
+                "Data / Hora": m.data_hora,
+                "Tipo": m.tipo,
+                "Código": m.peca_codigo,
+                "Peça": m.peca_nome,
+                "Quantidade": m.quantidade,
+                "Solicitante / Origem": m.solicitante,
+            }
+            for m in movs
+        ],
+        columns=[
+            "Data / Hora",
+            "Tipo",
+            "Código",
+            "Peça",
+            "Quantidade",
+            "Solicitante / Origem",
+        ],
+    )
+
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
+    rows_spare = []
+    for m in maquinas:
+        if m.pecas:
+            for ps in m.pecas:
+                rows_spare.append({
+                    "Máquina": m.maquina,
+                    "Modelo": m.modelo,
+                    "Setor": m.setor,
+                    "Notas Ativo": m.pecas_necessarias,
+                    "Peça Mapeada": ps.nome_peca,
+                    "Código Peça": ps.codigo_peca,
+                    "Qtd": ps.quantidade,
+                    "Obs Peça": ps.observacao,
+                })
+        else:
+            rows_spare.append({
+                "Máquina": m.maquina,
+                "Modelo": m.modelo,
+                "Setor": m.setor,
+                "Notas Ativo": m.pecas_necessarias,
+                "Peça Mapeada": "",
+                "Código Peça": "",
+                "Qtd": "",
+                "Obs Peça": "",
+            })
+    df_spare = pd.DataFrame(
+        rows_spare,
+        columns=[
+            "Máquina",
+            "Modelo",
+            "Setor",
+            "Notas Ativo",
+            "Peça Mapeada",
+            "Código Peça",
+            "Qtd",
+            "Obs Peça",
+        ],
+    )
+
+    planos = PlanoPreventivo.query.all()
+    df_pcm = pd.DataFrame(
+        [
+            {
+                "Máquina": p.maquina,
+                "Tag": p.codigo_maquina,
+                "Setor": p.setor,
+                "Frequência": p.frequencia,
+                "Próxima Execução": p.proxima_execucao,
+                "Responsável": p.responsavel,
+                "Status": status_plano(p),
+                "Roteiro": p.atividade,
+            }
+            for p in planos
+        ],
+        columns=[
+            "Máquina",
+            "Tag",
+            "Setor",
+            "Frequência",
+            "Próxima Execução",
+            "Responsável",
+            "Status",
+            "Roteiro",
+        ],
+    )
+
+    compras = SolicitacaoCompra.query.order_by(
+        SolicitacaoCompra.id.desc()
+    ).all()
+    rows_sc = []
+    for sc in compras:
+        for it in sc.itens:
+            rows_sc.append({
+                "Número S.C.": sc.numero_sc,
+                "Tipo S.C.": sc.tipo_sc,
+                "Data": sc.data_solicitacao,
+                "Status": sc.status_aprovacao,
+                "Solicitante": sc.solicitante,
+                "Centro Custo": sc.centro_custo,
+                "Objeto": sc.objeto_solicitacao,
+                "Item": it.descritivo,
+                "Qtd": it.quantidade,
+                "Unid": it.unidade,
+                "Link": it.link_referencia,
+            })
+    df_sc = pd.DataFrame(
+        rows_sc,
+        columns=[
+            "Número S.C.",
+            "Tipo S.C.",
+            "Data",
+            "Status",
+            "Solicitante",
+            "Centro Custo",
+            "Objeto",
+            "Item",
+            "Qtd",
+            "Unid",
+            "Link",
+        ],
+    )
+
+    logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).all()
+    df_logs = pd.DataFrame(
+        [
+            {
+                "Data / Hora": l.data_hora,
+                "Módulo": l.modulo,
+                "Ação": l.acao,
+                "Detalhes": l.detalhes,
+            }
+            for l in logs
+        ],
+        columns=["Data / Hora", "Módulo", "Ação", "Detalhes"],
+    )
+
+    registrar_auditoria(
+        "Governança",
+        "Exportação Backup Excel Geral",
+        "Planilha completa multi-abas exportada.",
+    )
+    return gerar_excel_multiplas_abas(
+        [
+            ("Ordens_Servico", df_os, "Status"),
+            ("Estoque", df_est, "Status"),
+            ("Movimentacoes", df_mov, None),
+            ("Spare_Parts", df_spare, None),
+            ("PCM_Preventivas", df_pcm, "Status"),
+            ("Solicitacoes_Compra", df_sc, "Status"),
+            ("Auditoria", df_logs, None),
+        ],
+        "backup_geral_manutencao_jamaica",
+    )
+
+
 # ==============================================================================
-# ROTA LOBBY DE ENTRADA
+# ROTAS DO LOBBY E DE ORDENS DE SERVIÇO (ACESSO LIVRE CHÃO DE FÁBRICA)
 # ==============================================================================
 @app.route("/")
 def lobby():
+    total = OrdemServico.query.count()
     abertas = OrdemServico.query.filter_by(status="Aberta").count()
     aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
-    total = OrdemServico.query.count()
     ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
     return renderizar(
         HTML_LOBBY,
@@ -3861,57 +4674,46 @@ def lobby():
     )
 
 
-# ==============================================================================
-# ROTA ORDENS DE SERVIÇO (LIVRE ACESSO)
-# ==============================================================================
 @app.route("/os")
 def dashboard():
     busca = request.args.get("busca", "").strip()
     prefill_setor = request.args.get("abrir_maquina", "").strip()
-    consulta = OrdemServico.query
-    if busca:
-        termo = f"%{busca}%"
-        consulta = consulta.filter(
-            db.or_(
-                OrdemServico.numero_os.ilike(termo),
-                OrdemServico.solicitante.ilike(termo),
-                OrdemServico.setor.ilike(termo),
-                OrdemServico.titulo.ilike(termo),
-                OrdemServico.descricao.ilike(termo),
-                OrdemServico.responsavel.ilike(termo),
-            )
-        )
-    ordens = consulta.order_by(OrdemServico.id.desc()).all()
-    abertas = OrdemServico.query.filter_by(status="Aberta").count()
-    aguardando = OrdemServico.query.filter_by(status="Aguardando Peça").count()
-    finalizadas = OrdemServico.query.filter_by(status="Finalizada").count()
-    total = OrdemServico.query.count()
-    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    ordens = OrdemServico.query.order_by(OrdemServico.id.desc()).all()
+    total = len(ordens)
+    abertas = sum(1 for o in ordens if o.status == "Aberta")
+    aguardando = sum(1 for o in ordens if o.status == "Aguardando Peça")
+    finalizadas = sum(1 for o in ordens if o.status == "Finalizada")
+    pct_final = round((finalizadas / total) * 100) if total else 0
     pecas_estoque = (
         ItemEstoque.query.filter(ItemEstoque.quantidade > 0)
         .order_by(ItemEstoque.nome.asc())
         .all()
     )
-    maquinas_sugeridas = [
-        m.maquina for m in MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
-    ]
+
+    maquinas_spare = [m.maquina for m in MaquinaSpare.query.all()]
+    maquinas_os = [o.setor for o in ordens if o.setor]
+    maquinas_sugeridas = sorted(
+        list(set(maquinas_spare + maquinas_os)), key=lambda x: x.lower()
+    )
+    ultimo_os_id = max((o.id for o in ordens), default=0)
 
     return renderizar(
         HTML_OS,
         ordens=ordens,
+        busca=busca,
+        prefill_setor=prefill_setor,
+        total=total,
         abertas=abertas,
         aguardando=aguardando,
         finalizadas=finalizadas,
-        total=total,
-        pct_final=round(finalizadas / total * 100) if total else 0,
+        pct_final=pct_final,
         proxima=gerar_numero_os(),
-        ultimo_os_id=ultimo_os_id,
-        busca=busca,
-        prefill_setor=prefill_setor,
-        maquinas_sugeridas=maquinas_sugeridas,
         duplas=DUPLAS,
         pecas_estoque=pecas_estoque,
+        maquinas_sugeridas=maquinas_sugeridas,
         fmt_hhmm=horas_decimais_para_hhmm,
+        ultimo_os_id=ultimo_os_id,
+        max_fotos_os=MAX_FOTOS_EVIDENCIA_POR_OS,
     )
 
 
@@ -3919,44 +4721,33 @@ def dashboard():
 def criar():
     solicitante = request.form.get("solicitante", "").strip()
     if not solicitante:
-        flash("Informe o nome do solicitante.")
+        flash("Informe o solicitante para registrar a Ordem de Serviço.")
         return redirect(url_for("dashboard"))
     prioridade = request.form.get("prioridade", "Média")
     if prioridade not in PRIORIDADES_VALIDAS:
         prioridade = "Média"
-    try:
-        with os_lock:
-            nova = OrdemServico(
-                numero_os=gerar_numero_os(),
-                solicitante=solicitante,
-                setor=request.form.get("setor", "").strip(),
-                titulo=request.form.get("titulo", "").strip(),
-                descricao=request.form.get("descricao", "").strip(),
-                prioridade=prioridade,
-                responsavel=request.form.get("responsavel", "").strip(),
-                abertura=agora_formatado(),
-                finalizacao="",
-                status="Aberta",
-                tempo_total="",
-                tipo_manutencao="",
-                funcionarios="",
-                horas_trabalhadas=0.0,
-                observacao_tecnica="",
-                motivo_pausa="",
-                evidencia_imagem="",
-                evidencia_nome="",
-            )
-            db.session.add(nova)
-            db.session.commit()
-            registrar_auditoria(
-                "Ordens de Serviço",
-                "Criação O.S.",
-                f"O.S. {nova.numero_os} criada para {nova.setor or 'Geral'}",
-            )
-        flash(f"O.S. {nova.numero_os} registrada com sucesso!")
-    except Exception:
-        db.session.rollback()
-        flash("Não foi possível criar a O.S.")
+    setor = request.form.get("setor", "").strip()[:100]
+    with os_lock:
+        num_os = gerar_numero_os()
+        ordem = OrdemServico(
+            numero_os=num_os,
+            solicitante=solicitante[:100],
+            setor=setor,
+            titulo=request.form.get("titulo", "").strip()[:200],
+            descricao=request.form.get("descricao", "").strip()[:1000],
+            prioridade=prioridade,
+            responsavel=request.form.get("responsavel", "").strip()[:100],
+            abertura=agora_formatado(),
+            status="Aberta",
+        )
+        db.session.add(ordem)
+        db.session.commit()
+    registrar_auditoria(
+        "Ordens de Serviço",
+        "Nova O.S. Aberta",
+        f"O.S. {num_os} | Máq: {setor} | Solicitante: {solicitante}",
+    )
+    flash(f"Ordem de Serviço {num_os} registrada com sucesso!")
     return redirect(url_for("dashboard"))
 
 
@@ -3964,127 +4755,131 @@ def criar():
 def pausar_os(id):
     ordem = db.session.get(OrdemServico, id)
     if not ordem or ordem.status == "Finalizada":
-        flash("Ordem de Serviço inválida.")
+        flash("Ordem de Serviço inválida para alteração de espera.")
         return redirect(url_for("dashboard"))
-    novo_status = request.form.get("novo_status", "Aguardando Peça").strip()
-    motivo = request.form.get("motivo_pausa", "").strip()
-    try:
-        ordem.status = novo_status
-        ordem.motivo_pausa = motivo if novo_status == "Aguardando Peça" else ""
-        db.session.commit()
-        registrar_auditoria(
-            "Ordens de Serviço",
-            "Atualização Status",
-            f"O.S. {ordem.numero_os} alterada para {novo_status}",
-        )
-        flash(f"O.S. {ordem.numero_os} atualizada.")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao atualizar status.")
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/imprimir-os/<int:id>")
-def imprimir_os(id):
-    ordem = db.session.get(OrdemServico, id)
-    if not ordem:
-        flash("O.S. não encontrada.")
-        return redirect(url_for("dashboard"))
-    return render_template_string(
-        HTML_IMPRESSAO_OS, os=ordem, fmt_hhmm=horas_decimais_para_hhmm
+    novo_status = request.form.get("novo_status", "Aguardando Peça")
+    if novo_status not in ("Aberta", "Aguardando Peça"):
+        novo_status = "Aguardando Peça"
+    motivo = request.form.get("motivo_pausa", "").strip()[:200]
+    ordem.status = novo_status
+    ordem.motivo_pausa = motivo if novo_status == "Aguardando Peça" else ""
+    db.session.commit()
+    registrar_auditoria(
+        "Ordens de Serviço",
+        "Status Espera",
+        f"O.S. {ordem.numero_os} -> {novo_status} ({motivo})",
     )
+    flash(f"Status da O.S. {ordem.numero_os} atualizado para: {novo_status}.")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/finalizar/<int:id>", methods=["POST"])
 def finalizar(id):
     ordem = db.session.get(OrdemServico, id)
     if not ordem or ordem.status == "Finalizada":
-        flash("O.S. inválida ou já finalizada.")
+        flash("Ordem de Serviço inválida ou já finalizada.")
         return redirect(url_for("dashboard"))
-
-    tipo_manutencao = request.form.get("tipo_manutencao", "Preventiva")
-    funcs_selecionados = [
-        f for f in request.form.getlist("funcionarios") if f in FUNCIONARIOS_VALIDOS
+    tipo_manutencao = request.form.get("tipo_manutencao", "").strip()
+    if tipo_manutencao not in TIPOS_MANUTENCAO:
+        flash("Selecione o tipo de manutenção (Preventiva ou Corretiva).")
+        return redirect(url_for("dashboard"))
+    funcs = [
+        f
+        for f in request.form.getlist("funcionarios")
+        if f in FUNCIONARIOS_VALIDOS
     ]
-    tempo_str = request.form.get("tempo_trabalhado", "01:00").strip()
-    obs_tecnica = request.form.get("observacao_tecnica", "").strip()
-    horas_decimais = tempo_hhmm_para_horas_decimais(tempo_str)
-
-    if not funcs_selecionados:
-        flash("Selecione pelo menos um executante.")
+    if not funcs:
+        flash("Selecione pelo menos um funcionário envolvido na execução.")
         return redirect(url_for("dashboard"))
-    if horas_decimais <= 0:
-        flash("Informe o tempo trabalhado.")
+    tempo_str = request.form.get("tempo_trabalhado", "").strip()
+    horas_trabalhadas = tempo_hhmm_para_horas_decimais(tempo_str)
+    if horas_trabalhadas <= 0:
+        flash("Informe um tempo trabalhado válido maior que 00:00.")
         return redirect(url_for("dashboard"))
 
-    arquivo_evidencia = request.files.get("evidencia_foto")
-    ev_arquivo, ev_nome, erro_ev = salvar_evidencia_os(
-        arquivo_evidencia, ordem.numero_os
+    existentes = listar_evidencias_ordem(ordem)
+    arquivos_foto = request.files.getlist("evidencia_foto")
+    novas_evidencias, erro_ev = salvar_multiplas_evidencias_os(
+        arquivos_foto, ordem.numero_os, existentes=len(existentes)
     )
     if erro_ev:
         flash(erro_ev)
         return redirect(url_for("dashboard"))
 
     peca_id_str = request.form.get("peca_id", "").strip()
-    try:
-        peca_qtd = max(1, int(request.form.get("peca_qtd", 1)))
-    except ValueError:
-        peca_qtd = 1
-
-    try:
-        with estoque_lock:
-            if peca_id_str.isdigit():
-                peca = db.session.get(ItemEstoque, int(peca_id_str))
-                if peca:
-                    if peca.quantidade < peca_qtd:
-                        remover_evidencia_os(ev_arquivo)
-                        flash(
-                            f"Saldo insuficiente de '{peca.nome}' (Disponível:"
-                            f" {peca.quantidade})."
-                        )
-                        return redirect(url_for("dashboard"))
-                    peca.quantidade -= peca_qtd
-                    peca.ultima_atualizacao = agora_formatado()
-                    db.session.add(
-                        HistoricoMovimentacao(
-                            peca_codigo=peca.codigo,
-                            peca_nome=peca.nome,
-                            tipo="Retirada",
-                            quantidade=peca_qtd,
-                            solicitante=(
-                                f"O.S. {ordem.numero_os} ({', '.join(funcs_selecionados)})"
-                            ),
-                            data_hora=agora_formatado(),
-                        )
+    peca_qtd_str = request.form.get("peca_qtd", "1").strip()
+    if peca_id_str:
+        try:
+            peca_id = int(peca_id_str)
+            peca_qtd = max(1, int(peca_qtd_str))
+            with estoque_lock:
+                peca = db.session.get(ItemEstoque, peca_id)
+                if not peca or peca.quantidade < peca_qtd:
+                    for item in novas_evidencias:
+                        remover_evidencia_os(item["arquivo"])
+                    flash(
+                        "Saldo insuficiente no estoque para a peça selecionada."
                     )
-                    obs_tecnica = (
-                        f"{obs_tecnica}\n[Material utilizado: {peca_qtd}x {peca.nome}"
-                        f" ({peca.codigo})]"
-                    ).strip()
+                    return redirect(url_for("dashboard"))
+                peca.quantidade -= peca_qtd
+                peca.ultima_atualizacao = agora_formatado()
+                db.session.add(
+                    HistoricoMovimentacao(
+                        peca_codigo=peca.codigo,
+                        peca_nome=peca.nome,
+                        tipo="Retirada",
+                        quantidade=peca_qtd,
+                        solicitante=f"O.S. {ordem.numero_os} ({', '.join(funcs)})",
+                        data_hora=agora_formatado(),
+                    )
+                )
+        except ValueError:
+            pass
 
-            ordem.finalizacao = agora_formatado()
-            ordem.status = "Finalizada"
-            ordem.motivo_pausa = ""
-            ordem.tipo_manutencao = tipo_manutencao
-            ordem.funcionarios = ", ".join(funcs_selecionados)
-            ordem.horas_trabalhadas = horas_decimais
-            ordem.observacao_tecnica = obs_tecnica
-            ordem.tempo_total = calcular_tempo_total(ordem.abertura, ordem.finalizacao)
-            if ev_arquivo:
-                remover_evidencia_os(ordem.evidencia_imagem)
-                ordem.evidencia_imagem = ev_arquivo
-                ordem.evidencia_nome = ev_nome
-            db.session.commit()
-            det_aud = f"O.S. {ordem.numero_os} finalizada por {ordem.funcionarios}"
-            if ev_arquivo:
-                det_aud += f" com evidência ({ev_nome})"
-            registrar_auditoria("Ordens de Serviço", "Finalização O.S.", det_aud)
-        flash(f"O.S. {ordem.numero_os} finalizada com sucesso!")
+    finalizacao = agora_formatado()
+    ordem.finalizacao = finalizacao
+    ordem.status = "Finalizada"
+    ordem.tempo_total = calcular_tempo_total(ordem.abertura, finalizacao)
+    ordem.tipo_manutencao = tipo_manutencao
+    ordem.funcionarios = ", ".join(funcs)
+    ordem.horas_trabalhadas = horas_trabalhadas
+    ordem.observacao_tecnica = request.form.get(
+        "observacao_tecnica", ""
+    ).strip()[:2000]
+    ordem.motivo_pausa = ""
+    if novas_evidencias:
+        gravar_evidencias_ordem(ordem, existentes + novas_evidencias)
+
+    try:
+        db.session.commit()
     except Exception:
         db.session.rollback()
-        remover_evidencia_os(ev_arquivo)
-        flash("Erro ao finalizar O.S.")
+        for item in novas_evidencias:
+            remover_evidencia_os(item["arquivo"])
+        flash("Erro ao finalizar a Ordem de Serviço.")
+        return redirect(url_for("dashboard"))
+
+    det_aud = (
+        f"O.S. {ordem.numero_os} concluída por {', '.join(funcs)} ({tempo_str})"
+    )
+    if novas_evidencias:
+        det_aud += f" | {len(novas_evidencias)} foto(s) anexada(s)"
+    registrar_auditoria("Ordens de Serviço", "O.S. Finalizada", det_aud)
+    flash(
+        f"Ordem de Serviço {ordem.numero_os} finalizada e estoque atualizado!"
+    )
     return redirect(url_for("dashboard"))
+
+
+@app.route("/os/imprimir/<int:id>")
+def imprimir_os(id):
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem:
+        flash("Ordem de Serviço não encontrada.")
+        return redirect(url_for("dashboard"))
+    return renderizar(
+        HTML_IMPRESSAO_OS, os=ordem, fmt_hhmm=horas_decimais_para_hhmm
+    )
 
 
 @app.route("/excluir/<int:id>", methods=["POST"])
@@ -4092,480 +4887,486 @@ def excluir(id):
     ordem = db.session.get(OrdemServico, id)
     if ordem:
         num = ordem.numero_os
-        ev_antiga = ordem.evidencia_imagem
+        ev_arq = ordem.evidencia_imagem
         db.session.delete(ordem)
         db.session.commit()
-        remover_evidencia_os(ev_antiga)
+        remover_evidencia_os(ev_arq)
         registrar_auditoria(
-            "Ordens de Serviço", "Exclusão O.S.", f"O.S. {num} excluída permanentemente"
+            "Ordens de Serviço",
+            "O.S. Excluída",
+            f"O.S. {num} removida do sistema.",
         )
-        flash("O.S. excluída com sucesso!")
+        flash(f"Ordem de Serviço {num} excluída com sucesso.")
     return redirect(url_for("dashboard"))
 
 
 @app.route("/excel")
 def excel():
-    ordens = OrdemServico.query.order_by(OrdemServico.id.asc()).all()
-    colunas = [
-        "OS",
-        "Solicitante",
-        "Máquina / Setor",
-        "Causa",
-        "Descrição",
-        "Laudo Técnico",
-        "Evidência",
-        "Prioridade",
-        "Responsável",
-        "Tipo Manutenção",
-        "Funcionários",
-        "Horas Trabalhadas",
-        "Status",
-        "Abertura",
-        "Finalização",
-        "Lead Time Total",
-    ]
-    dados = [
-        {
-            "OS": o.numero_os,
-            "Solicitante": o.solicitante,
-            "Máquina / Setor": o.setor or "",
-            "Causa": o.titulo or "",
-            "Descrição": o.descricao or "",
-            "Laudo Técnico": o.observacao_tecnica or "",
-            "Evidência": o.evidencia_nome or ("Sim" if o.evidencia_imagem else ""),
-            "Prioridade": o.prioridade,
-            "Responsável": o.responsavel or "",
-            "Tipo Manutenção": o.tipo_manutencao or "",
-            "Funcionários": o.funcionarios or "",
-            "Horas Trabalhadas": horas_decimais_para_hhmm(
-                o.horas_trabalhadas or 0
-            ),
-            "Status": o.status,
-            "Abertura": o.abertura,
-            "Finalização": o.finalizacao or "",
-            "Lead Time Total": o.tempo_total or "",
-        }
-        for o in ordens
-    ]
-    registrar_auditoria(
-        "Relatórios", "Exportação Excel O.S.", "Planilha de Ordens de Serviço gerada."
+    ordens = OrdemServico.query.order_by(OrdemServico.id.desc()).all()
+    df = pd.DataFrame(
+        [
+            {
+                "OS": o.numero_os,
+                "Solicitante": o.solicitante,
+                "Máquina / Setor": o.setor,
+                "Causa / Sintoma": o.titulo,
+                "Descrição": o.descricao,
+                "Laudo Técnico": o.observacao_tecnica,
+                "Qtd Evidências": len(listar_evidencias_ordem(o)),
+                "Evidências Anexadas": ", ".join(
+                    e["nome"] for e in listar_evidencias_ordem(o)
+                ),
+                "Prioridade": o.prioridade,
+                "Responsável": o.responsavel,
+                "Tipo": o.tipo_manutencao or "-",
+                "Executantes": o.funcionarios or "-",
+                "Horas": (
+                    horas_decimais_para_hhmm(o.horas_trabalhadas)
+                    if o.horas_trabalhadas
+                    else "-"
+                ),
+                "Status": o.status,
+                "Abertura": o.abertura,
+                "Finalização": o.finalizacao or "-",
+                "Lead Time": o.tempo_total or "-",
+            }
+            for o in ordens
+        ],
+        columns=[
+            "OS",
+            "Solicitante",
+            "Máquina / Setor",
+            "Causa / Sintoma",
+            "Descrição",
+            "Laudo Técnico",
+            "Qtd Evidências",
+            "Evidências Anexadas",
+            "Prioridade",
+            "Responsável",
+            "Tipo",
+            "Executantes",
+            "Horas",
+            "Status",
+            "Abertura",
+            "Finalização",
+            "Lead Time",
+        ],
     )
     return gerar_excel(
-        pd.DataFrame(dados, columns=colunas),
-        "Ordens de Serviço",
-        "ordens_servico",
-        coluna_status="Status",
+        df, "Ordens_Servico", "ordens_servico_jamaica", coluna_status="Status"
     )
 
 
 # ==============================================================================
-# ROTA UNIFICADA: CENTRAL DE GESTÃO (PROTEGIDA POR LOGIN)
+# ROTA UNIFICADA DA CENTRAL DE GESTÃO (PROTEGIDA POR LOGIN)
 # ==============================================================================
 @app.route("/gestao")
 @requer_login
 def central_gestao():
-    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
-    pecas = ItemEstoque.query.order_by(ItemEstoque.id.desc()).all()
+    pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
     movimentacoes = (
         HistoricoMovimentacao.query.order_by(HistoricoMovimentacao.id.desc())
         .limit(50)
         .all()
     )
-    total_pecas = ItemEstoque.query.count()
-    total_quantidade = (
-        db.session.query(db.func.sum(ItemEstoque.quantidade)).scalar() or 0
-    )
-    itens_baixo = ItemEstoque.query.filter(
-        ItemEstoque.quantidade <= ItemEstoque.estoque_minimo
-    ).count()
+    total_pecas = len(pecas)
+    total_quantidade = sum(p.quantidade for p in pecas)
+    itens_baixo = sum(1 for p in pecas if p.quantidade <= p.estoque_minimo)
+    total_movimentacoes = HistoricoMovimentacao.query.count()
+    mapa_estoque = {p.codigo.upper(): p.quantidade for p in pecas}
 
-    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.id.desc()).all()
-    mapa_estoque = {
-        item.codigo.upper(): item.quantidade for item in ItemEstoque.query.all()
-    }
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
 
+    planos_db = PlanoPreventivo.query.all()
     hoje = date.today()
-    planos = PlanoPreventivo.query.all()
-    planos.sort(key=lambda p: parse_data_br(p.proxima_execucao) or date.max)
-    for p in planos:
-        p.status_calc = status_plano(p, hoje)
-    atrasados = sum(
-        1
-        for p in planos
-        if parse_data_br(p.proxima_execucao)
-        and parse_data_br(p.proxima_execucao) < hoje
+    limite_7dias = hoje + timedelta(days=7)
+    planos_exibicao = []
+    atrasados = agendados = proximos = 0
+    for p in planos_db:
+        st = status_plano(p, hoje)
+        if st == "Atrasado":
+            atrasados += 1
+        else:
+            agendados += 1
+        data_exec = parse_data_br(p.proxima_execucao)
+        if data_exec and hoje <= data_exec <= limite_7dias:
+            proximos += 1
+        planos_exibicao.append({
+            "id": p.id,
+            "maquina": p.maquina,
+            "codigo_maquina": p.codigo_maquina,
+            "setor": p.setor,
+            "atividade": p.atividade,
+            "frequencia": p.frequencia,
+            "responsavel": p.responsavel,
+            "proxima_execucao": (
+                data_exec.strftime("%d/%m/%Y")
+                if data_exec
+                else p.proxima_execucao
+            ),
+            "data_ordenacao": data_exec or date.max,
+            "status_calc": st,
+        })
+    planos_exibicao.sort(key=lambda x: x["data_ordenacao"])
+
+    compras = SolicitacaoCompra.query.order_by(
+        SolicitacaoCompra.id.desc()
+    ).all()
+    total_sc = len(compras)
+    emergenciais = sum(
+        1 for c in compras if c.tipo_sc == "S.C. Emergencial"
     )
-    proximos = sum(
-        1
-        for p in planos
-        if parse_data_br(p.proxima_execucao)
-        and hoje <= parse_data_br(p.proxima_execucao) <= hoje + timedelta(days=7)
+    programadas = sum(
+        1 for c in compras if c.tipo_sc == "S.C. Programada"
+    )
+    reposicao = sum(
+        1 for c in compras if c.tipo_sc == "S.C. Reposição / Estoque"
     )
 
-    repor_codigo = request.args.get("repor_codigo", "").strip()
-    repor_nome = request.args.get("repor_nome", "").strip()
-    repor_qtd = request.args.get("repor_qtd", "1").strip()
-    repor_item = (
-        {"codigo": repor_codigo, "nome": repor_nome, "qtd": repor_qtd}
-        if repor_codigo
-        else None
-    )
-
-    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.desc()).all()
-    total_sc = SolicitacaoCompra.query.count()
-    emergenciais = SolicitacaoCompra.query.filter_by(
-        tipo_sc="S.C. Emergencial"
-    ).count()
-    programadas = SolicitacaoCompra.query.filter_by(
-        tipo_sc="S.C. Programada"
-    ).count()
-    reposicao = SolicitacaoCompra.query.filter_by(
-        tipo_sc="S.C. Reposição / Estoque"
-    ).count()
+    repor_item = None
+    if request.args.get("repor_codigo"):
+        repor_item = {
+            "codigo": request.args.get("repor_codigo", ""),
+            "nome": request.args.get("repor_nome", ""),
+            "qtd": request.args.get("repor_qtd", "1"),
+        }
 
     ordens_fin = OrdemServico.query.filter_by(status="Finalizada").all()
-    meses_dict = {}
-    maquinas_stats = {}
-    total_preventiva = 0
-    total_corretiva = 0
-    horas_corretivas = 0.0
-
-    for o in ordens_fin:
-        tipo = o.tipo_manutencao or "Preventiva"
-        horas_os = o.horas_trabalhadas or 0.0
-        if tipo == "Preventiva":
-            total_preventiva += 1
-        else:
-            total_corretiva += 1
-            horas_corretivas += horas_os
-
-        nome_maq = re.sub(r"\s+", " ", (o.setor or "").strip())
-        chave_maq = normalizar_chave_maquina(nome_maq)
-        if chave_maq:
-            if chave_maq not in maquinas_stats:
-                maquinas_stats[chave_maq] = {
-                    "chave": chave_maq,
-                    "nome": nome_maq,
-                    "qtd": 0,
-                    "corretivas": 0,
-                    "horas": 0.0,
-                    "horas_corretivas": 0.0,
-                    "datas_corretivas": [],
-                }
-            maquinas_stats[chave_maq]["qtd"] += 1
-            maquinas_stats[chave_maq]["horas"] += horas_os
-            if tipo == "Corretiva":
-                maquinas_stats[chave_maq]["corretivas"] += 1
-                maquinas_stats[chave_maq]["horas_corretivas"] += horas_os
-                try:
-                    maquinas_stats[chave_maq]["datas_corretivas"].append(
-                        datetime.strptime(o.abertura, FORMATO_DATA)
-                    )
-                except (ValueError, TypeError):
-                    pass
-
-        chave_mes = chave_mes_os(o) or datetime.now().strftime("%Y-%m")
-        if chave_mes not in meses_dict:
-            ano, mes_num = chave_mes.split("-")
-            meses_dict[chave_mes] = {
-                "chave": chave_mes,
-                "mes_nome": f"{MESES_PT.get(mes_num, mes_num)} de {ano}",
-                "Preventiva": 0,
-                "Corretiva": 0,
-            }
-        if tipo == "Preventiva":
-            meses_dict[chave_mes]["Preventiva"] += 1
-        else:
-            meses_dict[chave_mes]["Corretiva"] += 1
-
-    mttr_horas = (
-        (horas_corretivas / total_corretiva) if total_corretiva > 0 else 0.0
+    total_fin = len(ordens_fin)
+    total_preventiva = sum(
+        1 for o in ordens_fin if o.tipo_manutencao == "Preventiva"
     )
-    mttr_str = horas_decimais_para_hhmm(mttr_horas) if total_corretiva > 0 else "N/D"
+    total_corretiva = sum(
+        1 for o in ordens_fin if o.tipo_manutencao == "Corretiva"
+    )
+    pct_geral_prev = (
+        round((total_preventiva / total_fin) * 100) if total_fin else 0
+    )
+
+    # Cálculo de MTTR Geral e MTBF/MTTR por Máquina Específica
+    corretivas_com_tempo = [
+        o for o in ordens_fin if o.tipo_manutencao == "Corretiva"
+    ]
+    soma_reparo_horas = sum(
+        (o.horas_trabalhadas or 0.0) for o in corretivas_com_tempo
+    )
+    mttr_horas = (
+        round(soma_reparo_horas / len(corretivas_com_tempo), 2)
+        if corretivas_com_tempo
+        else 0.0
+    )
+    mttr_str = formatar_duracao_indicador(mttr_horas)
+
+    grupos_maquinas = {}
+    for o in corretivas_com_tempo:
+        nome_raw = (o.setor or "").strip()
+        if not nome_raw:
+            continue
+        chave_maq = normalizar_chave_maquina(nome_raw)
+        if chave_maq not in grupos_maquinas:
+            grupos_maquinas[chave_maq] = {
+                "chave": chave_maq,
+                "nome": nome_raw,
+                "corretivas": 0,
+                "horas_reparo": 0.0,
+                "datas_falha": [],
+            }
+        g = grupos_maquinas[chave_maq]
+        g["corretivas"] += 1
+        g["horas_reparo"] += o.horas_trabalhadas or 0.0
+        for campo_dt in (o.abertura, o.finalizacao):
+            try:
+                dt_obj = datetime.strptime(campo_dt, FORMATO_DATA)
+                g["datas_falha"].append(dt_obj)
+                break
+            except (ValueError, TypeError):
+                continue
 
     mtbf_maquinas = []
     mtbfs_validos = []
-    for st in maquinas_stats.values():
-        datas = sorted(st["datas_corretivas"])
-        if len(datas) >= 2:
-            intervalo_h = (datas[-1] - datas[0]).total_seconds() / 3600.0
-            mtbf_h = max(
-                0.0, (intervalo_h - st["horas_corretivas"]) / (len(datas) - 1)
-            )
-            mtbfs_validos.append(mtbf_h)
-            mtbf_maq_str = formatar_duracao_indicador(mtbf_h)
-        else:
-            mtbf_h = None
-            mtbf_maq_str = "N/D (1 falha)" if len(datas) == 1 else "Sem falhas"
-
-        mttr_maq_h = (
-            (st["horas_corretivas"] / st["corretivas"])
-            if st["corretivas"] > 0
+    for g in grupos_maquinas.values():
+        mttr_m = (
+            round(g["horas_reparo"] / g["corretivas"], 2)
+            if g["corretivas"]
             else 0.0
         )
+        datas_ord = sorted(g["datas_falha"])
+        if len(datas_ord) >= 2:
+            span_h = (datas_ord[-1] - datas_ord[0]).total_seconds() / 3600.0
+            mtbf_m = round(max(0.0, span_h) / (len(datas_ord) - 1), 2)
+            mtbf_m_str = formatar_duracao_indicador(mtbf_m)
+            mtbfs_validos.append(mtbf_m)
+        else:
+            mtbf_m = None
+            mtbf_m_str = "Aguard. 2ª falha"
+
         mtbf_maquinas.append({
-            "chave": st["chave"],
-            "nome": st["nome"],
-            "qtd": st["qtd"],
-            "corretivas": st["corretivas"],
-            "mtbf_horas": mtbf_h,
-            "mtbf_str": mtbf_maq_str,
-            "mttr_str": (
-                horas_decimais_para_hhmm(mttr_maq_h)
-                if st["corretivas"] > 0
-                else "N/D"
-            ),
-            "horas": st["horas"],
-            "horas_str": horas_decimais_para_hhmm(st["horas"]),
+            "chave": g["chave"],
+            "nome": g["nome"],
+            "corretivas": g["corretivas"],
+            "mtbf_horas": mtbf_m,
+            "mtbf_str": mtbf_m_str,
+            "mttr_str": formatar_duracao_indicador(mttr_m),
+            "horas_str": horas_decimais_para_hhmm(g["horas_reparo"]),
         })
 
-    mtbf_maquinas.sort(
-        key=lambda x: (-x["corretivas"], -x["horas"], x["nome"])
+    mtbf_maquinas.sort(key=lambda x: (-x["corretivas"], x["nome"].lower()))
+    mtbf_horas = (
+        round(sum(mtbfs_validos) / len(mtbfs_validos), 2)
+        if mtbfs_validos
+        else 0.0
     )
+    mtbf_str = formatar_duracao_indicador(mtbf_horas)
 
-    if mtbfs_validos:
-        media_mtbf_h = sum(mtbfs_validos) / len(mtbfs_validos)
-        mtbf_str = formatar_duracao_indicador(media_mtbf_h)
-    else:
-        mtbf_str = "N/D"
+    agrupado = {}
+    for o in ordens_fin:
+        chave = chave_mes_os(o)
+        if not chave:
+            continue
+        if chave not in agrupado:
+            agrupado[chave] = {"prev": 0, "corr": 0}
+        if o.tipo_manutencao == "Preventiva":
+            agrupado[chave]["prev"] += 1
+        elif o.tipo_manutencao == "Corretiva":
+            agrupado[chave]["corr"] += 1
 
-    meses_ordenados = sorted(meses_dict.values(), key=lambda x: x["chave"])
     dados_tabela = []
-    for m in meses_ordenados:
-        prev, corr = m["Preventiva"], m["Corretiva"]
-        tot = prev + corr
+    for chave in sorted(agrupado.keys(), reverse=True):
+        ano, mes_num = chave.split("-")
         dados_tabela.append({
-            "chave": m["chave"],
-            "mes_nome": m["mes_nome"],
-            "total": tot,
-            "prev_qtd": prev,
-            "prev_pct": round(prev / tot * 100, 1) if tot else 0,
-            "corr_qtd": corr,
-            "corr_pct": round(corr / tot * 100, 1) if tot else 0,
+            "chave": chave,
+            "mes_nome": f"{MESES_PT.get(mes_num, mes_num)} / {ano}",
+            "prev_qtd": agrupado[chave]["prev"],
+            "corr_qtd": agrupado[chave]["corr"],
         })
 
-    total_fin = total_preventiva + total_corretiva
-
-    chaves_eq = sorted({c for c in (chave_mes_os(o) for o in ordens_fin) if c})
-    meses_eq = [
-        {
-            "chave": c,
-            "nome": (
-                f"{MESES_PT.get(c.split('-')[1], c.split('-')[1])} de"
-                f" {c.split('-')[0]}"
-            ),
-        }
-        for c in chaves_eq
+    mes_sel = request.args.get("mes", "geral")
+    chaves_meses = sorted(
+        {c for o in ordens_fin if (c := chave_mes_os(o))}, reverse=True
+    )
+    meses = [
+        {"chave": c, "nome": f"{MESES_PT.get(c[5:], c[5:])} / {c[:4]}"}
+        for c in chaves_meses
     ]
-    mes_sel = request.args.get("mes", "").strip()
-    if not mes_sel:
-        atual = datetime.now().strftime("%Y-%m")
-        mes_sel = atual if atual in chaves_eq else "geral"
-    ordens_fin_eq = [
+    if mes_sel != "geral" and mes_sel not in chaves_meses:
+        mes_sel = "geral"
+    ordens_eq = [
         o for o in ordens_fin if mes_sel == "geral" or chave_mes_os(o) == mes_sel
     ]
 
+    # Eficiência Individual por Funcionário
     funcionarios_indiv = []
     for d in DUPLAS:
-        for chave_cargo, cargo_label, icone_cargo in (
-            ("mecanico", "Mecânico", "🔧"),
-            ("eletricista", "Eletricista", "⚡"),
+        for papel, chave_nome in (
+            ("Mecânico", "mecanico"),
+            ("Eletricista", "eletricista"),
         ):
-            nome_func = d[chave_cargo]
-            horas, dias, qtd_os = 0.0, set(), 0
-            for o in ordens_fin_eq:
-                executantes = {
-                    f.strip() for f in (o.funcionarios or "").split(",") if f.strip()
-                }
-                if nome_func in executantes:
-                    horas += o.horas_trabalhadas or 0.0
-                    qtd_os += 1
+            nome_func = d[chave_nome]
+            horas_f = 0.0
+            qtd_os_f = 0
+            dias_f = set()
+            for o in ordens_eq:
+                funcs_os = [
+                    f.strip()
+                    for f in (o.funcionarios or "").split(",")
+                    if f.strip()
+                ]
+                if nome_func in funcs_os:
+                    qtd_os_f += 1
+                    horas_f += o.horas_trabalhadas or 0.0
                     try:
-                        dias.add(
+                        dias_f.add(
                             datetime.strptime(o.finalizacao, FORMATO_DATA).date()
                         )
                     except (ValueError, TypeError):
                         pass
-            cap = len(dias) * JORNADA_REFERENCIA
-            eficiencia = min(100.0, round(horas / cap * 100, 1)) if cap else 0.0
+            cap_f = len(dias_f) * JORNADA_REFERENCIA
+            efic_f = round((horas_f / cap_f) * 100, 1) if cap_f > 0 else 0.0
             funcionarios_indiv.append({
                 "nome": nome_func,
-                "funcao": cargo_label,
-                "icone": icone_cargo,
+                "funcao": papel,
                 "equipe": d["nome"],
                 "turno": d["turno"],
-                "horas": horas,
-                "tempo_str": horas_decimais_para_hhmm(horas),
-                "dias": len(dias),
-                "qtd_os": qtd_os,
-                "eficiencia": eficiencia,
-                "eficiencia_clamp": int(eficiencia),
+                "icone": d["icone"],
+                "horas": round(horas_f, 2),
+                "tempo_str": horas_decimais_para_hhmm(horas_f),
+                "qtd_os": qtd_os_f,
+                "dias": len(dias_f),
+                "eficiencia": efic_f,
+                "eficiencia_clamp": min(int(efic_f), 100),
             })
 
-    logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
-    tamanho_kb = (
+    logs = (
+        LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
+    )
+    tamanho_db = (
         round(os.path.getsize(DB_PATH) / 1024, 1)
-        if (not IS_POSTGRES and os.path.exists(DB_PATH))
+        if not IS_POSTGRES and os.path.exists(DB_PATH)
         else 0
     )
-    qtd_backups = (
+    backups_locais = (
         len([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")])
-        if (not IS_POSTGRES and os.path.exists(BACKUP_DIR))
+        if not IS_POSTGRES
         else 0
     )
+    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    resumo_banco = {
+        "ordens": OrdemServico.query.count(),
+        "estoque": total_pecas,
+        "maquinas": len(maquinas),
+        "planos": len(planos_exibicao),
+        "compras": total_sc,
+    }
 
     return renderizar(
         HTML_CENTRAL_GESTAO,
-        ultimo_os_id=ultimo_os_id,
         pecas=pecas,
         movimentacoes=movimentacoes,
         total_pecas=total_pecas,
         total_quantidade=total_quantidade,
         itens_baixo=itens_baixo,
-        total_movimentacoes=HistoricoMovimentacao.query.count(),
-        maquinas=maquinas,
+        total_movimentacoes=total_movimentacoes,
         mapa_estoque=mapa_estoque,
-        planos=planos,
-        total_planos=len(planos),
-        agendados=len(planos) - atrasados,
+        maquinas=maquinas,
+        planos=planos_exibicao,
+        total_planos=len(planos_exibicao),
         atrasados=atrasados,
+        agendados=agendados,
         proximos=proximos,
         compras=compras,
-        repor_item=repor_item,
-        hoje=hoje_iso(),
         total_sc=total_sc,
         emergenciais=emergenciais,
         programadas=programadas,
         reposicao=reposicao,
         proxima_sc=gerar_numero_sc(),
+        hoje=hoje_iso(),
         centros_custo_opcoes=CENTROS_CUSTO_OFICIAIS,
+        repor_item=repor_item,
+        dados_tabela=dados_tabela,
+        total_fin=total_fin,
         total_preventiva=total_preventiva,
         total_corretiva=total_corretiva,
-        total_fin=total_fin,
-        total_meses=len(meses_ordenados),
-        pct_geral_prev=(
-            round(total_preventiva / total_fin * 100, 1) if total_fin else 0
-        ),
+        pct_geral_prev=pct_geral_prev,
         mttr_str=mttr_str,
         mtbf_str=mtbf_str,
         mtbf_maquinas=mtbf_maquinas,
-        dados_tabela=dados_tabela,
+        total_meses=len(dados_tabela),
         funcionarios_indiv=funcionarios_indiv,
-        meses=meses_eq,
+        meses=meses,
         mes_sel=mes_sel,
         logs=logs,
+        tamanho_db=tamanho_db,
+        backups_locais=backups_locais,
         is_postgres=IS_POSTGRES,
-        tamanho_db=tamanho_kb,
-        backups_locais=qtd_backups,
+        resumo_banco=resumo_banco,
+        ultimo_os_id=ultimo_os_id,
     )
 
 
 # ==============================================================================
-# ROTAS DE AÇÕES DA CENTRAL DE GESTÃO
+# ROTAS DE AÇÃO DO ESTOQUE
 # ==============================================================================
 @app.route("/estoque/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_peca():
-    codigo = request.form.get("codigo", "").strip().upper()
-    nome = request.form.get("nome", "").strip()
+    codigo = request.form.get("codigo", "").strip().upper()[:50]
+    nome = request.form.get("nome", "").strip()[:150]
     if not codigo or not nome:
-        flash("Código e nome obrigatórios.")
+        flash("Código e Nome da peça são obrigatórios.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    if ItemEstoque.query.filter_by(codigo=codigo).first():
+        flash(f"O código {codigo} já está cadastrado no estoque.")
         return redirect(url_for("central_gestao", tab="estoque"))
     try:
-        quantidade = max(0, int(request.form.get("quantidade", 0)))
-        estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
+        quantidade = max(0, int(request.form.get("quantidade", "0")))
+        estoque_minimo = max(1, int(request.form.get("estoque_minimo", "2")))
     except ValueError:
-        flash("Quantidades inválidas.")
+        flash("Valores inválidos para quantidade ou estoque mínimo.")
         return redirect(url_for("central_gestao", tab="estoque"))
-
-    try:
-        with estoque_lock:
-            if ItemEstoque.query.filter_by(codigo=codigo).first():
-                flash(f"O código '{codigo}' já existe.")
-                return redirect(url_for("central_gestao", tab="estoque"))
-            nova_peca = ItemEstoque(
-                codigo=codigo,
-                nome=nome,
-                categoria=request.form.get("categoria", "Geral").strip()
-                or "Geral",
-                localizacao=request.form.get("localizacao", "").strip(),
+    agora = agora_formatado()
+    peca = ItemEstoque(
+        codigo=codigo,
+        nome=nome,
+        categoria=request.form.get("categoria", "Geral").strip()[:100]
+        or "Geral",
+        localizacao=request.form.get("localizacao", "").strip()[:100],
+        quantidade=quantidade,
+        estoque_minimo=estoque_minimo,
+        ultima_atualizacao=agora,
+    )
+    db.session.add(peca)
+    if quantidade > 0:
+        db.session.add(
+            HistoricoMovimentacao(
+                peca_codigo=codigo,
+                peca_nome=nome,
+                tipo="Entrada",
                 quantidade=quantidade,
-                estoque_minimo=estoque_minimo,
-                ultima_atualizacao=agora_formatado(),
+                solicitante="Cadastro Inicial",
+                data_hora=agora,
             )
-            db.session.add(nova_peca)
-            if quantidade > 0:
-                db.session.add(
-                    HistoricoMovimentacao(
-                        peca_codigo=codigo,
-                        peca_nome=nome,
-                        tipo="Entrada",
-                        quantidade=quantidade,
-                        solicitante="Cadastro Inicial",
-                        data_hora=agora_formatado(),
-                    )
-                )
-            db.session.commit()
-            registrar_auditoria(
-                "Estoque", "Novo SKU", f"Peça {codigo} - {nome} ({quantidade} un)"
-            )
-        flash(f"Peça '{nome}' cadastrada!")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao cadastrar peça.")
+        )
+    db.session.commit()
+    registrar_auditoria(
+        "Estoque",
+        "Cadastro Peça",
+        f"SKU {codigo} ({nome}) cadastrado com saldo {quantidade}",
+    )
+    flash(f"Peça '{nome}' cadastrada com sucesso!")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
 @app.route("/estoque/movimentar/<int:id>", methods=["POST"])
 @requer_login
 def movimentar_estoque(id):
-    peca = db.session.get(ItemEstoque, id)
-    if not peca:
-        flash("Peça não encontrada.")
+    tipo = request.form.get("tipo", "")
+    if tipo not in ("Retirada", "Entrada"):
+        flash("Tipo de movimentação inválido.")
         return redirect(url_for("central_gestao", tab="estoque"))
-    tipo = request.form.get("tipo", "Retirada")
-    solicitante = request.form.get("solicitante", "").strip()
     try:
-        qtd = int(request.form.get("qtd", 1))
-        if qtd <= 0:
-            raise ValueError
+        qtd = int(request.form.get("qtd", "0"))
     except ValueError:
-        flash("Quantidade inválida.")
+        qtd = 0
+    if qtd <= 0:
+        flash("A quantidade deve ser maior que zero.")
         return redirect(url_for("central_gestao", tab="estoque"))
-
-    try:
-        with estoque_lock:
-            if tipo == "Retirada":
-                if not solicitante:
-                    flash("Informe o solicitante/O.S.")
-                    return redirect(url_for("central_gestao", tab="estoque"))
-                if peca.quantidade < qtd:
-                    flash(f"Saldo insuficiente! Atual: {peca.quantidade}.")
-                    return redirect(url_for("central_gestao", tab="estoque"))
-                peca.quantidade -= qtd
-            else:
-                peca.quantidade += qtd
-            peca.ultima_atualizacao = agora_formatado()
-            db.session.add(
-                HistoricoMovimentacao(
-                    peca_codigo=peca.codigo,
-                    peca_nome=peca.nome,
-                    tipo=tipo,
-                    quantidade=qtd,
-                    solicitante=solicitante or "Almoxarifado / NF",
-                    data_hora=agora_formatado(),
+    solicitante = request.form.get("solicitante", "").strip()[:100]
+    if tipo == "Retirada" and not solicitante:
+        flash("Informe o solicitante ou O.S. para registrar a retirada.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    with estoque_lock:
+        peca = db.session.get(ItemEstoque, id)
+        if not peca:
+            flash("Peça não encontrada.")
+            return redirect(url_for("central_gestao", tab="estoque"))
+        if tipo == "Retirada":
+            if peca.quantidade < qtd:
+                flash(
+                    f"Saldo insuficiente! Atual: {peca.quantidade} unidade(s)."
                 )
+                return redirect(url_for("central_gestao", tab="estoque"))
+            peca.quantidade -= qtd
+        else:
+            peca.quantidade += qtd
+        agora = agora_formatado()
+        peca.ultima_atualizacao = agora
+        db.session.add(
+            HistoricoMovimentacao(
+                peca_codigo=peca.codigo,
+                peca_nome=peca.nome,
+                tipo=tipo,
+                quantidade=qtd,
+                solicitante=solicitante or "Reposição de Estoque",
+                data_hora=agora,
             )
-            db.session.commit()
-            registrar_auditoria(
-                "Estoque",
-                f"Movimentação ({tipo})",
-                f"{qtd}x {peca.codigo} - {peca.nome}",
-            )
-        flash("Movimentação registrada!")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao movimentar estoque.")
+        )
+        db.session.commit()
+    registrar_auditoria(
+        "Estoque",
+        f"Movimentação ({tipo})",
+        f"{qtd}x {peca.codigo} | Saldo: {peca.quantidade}",
+    )
+    flash(f"{tipo} de {qtd} unidade(s) registrada para {peca.nome}.")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
@@ -4576,33 +5377,34 @@ def editar_peca(id):
     if not peca:
         flash("Peça não encontrada.")
         return redirect(url_for("central_gestao", tab="estoque"))
-    codigo = request.form.get("codigo", "").strip().upper()
-    nome = request.form.get("nome", "").strip()
+    codigo = request.form.get("codigo", "").strip().upper()[:50]
+    nome = request.form.get("nome", "").strip()[:150]
+    if not codigo or not nome:
+        flash("Código e Nome da peça são obrigatórios.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    if ItemEstoque.query.filter(
+        ItemEstoque.codigo == codigo, ItemEstoque.id != id
+    ).first():
+        flash(f"Já existe outra peça com o código {codigo}.")
+        return redirect(url_for("central_gestao", tab="estoque"))
     try:
-        estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
+        estoque_minimo = max(1, int(request.form.get("estoque_minimo", "2")))
     except ValueError:
-        estoque_minimo = 2
-    try:
-        with estoque_lock:
-            if (
-                codigo != peca.codigo
-                and ItemEstoque.query.filter_by(codigo=codigo).first()
-            ):
-                flash("Código já em uso.")
-                return redirect(url_for("central_gestao", tab="estoque"))
-            peca.codigo = codigo
-            peca.nome = nome
-            peca.categoria = (
-                request.form.get("categoria", "Geral").strip() or "Geral"
-            )
-            peca.localizacao = request.form.get("localizacao", "").strip()
-            peca.estoque_minimo = estoque_minimo
-            peca.ultima_atualizacao = agora_formatado()
-            db.session.commit()
-        flash("Peça atualizada!")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao editar peça.")
+        flash("Estoque mínimo inválido.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    peca.codigo = codigo
+    peca.nome = nome
+    peca.categoria = (
+        request.form.get("categoria", "Geral").strip()[:100] or "Geral"
+    )
+    peca.localizacao = request.form.get("localizacao", "").strip()[:100]
+    peca.estoque_minimo = estoque_minimo
+    peca.ultima_atualizacao = agora_formatado()
+    db.session.commit()
+    registrar_auditoria(
+        "Estoque", "Edição Peça", f"SKU {codigo} ({nome}) atualizado."
+    )
+    flash(f"Cadastro da peça '{nome}' atualizado com sucesso!")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
@@ -4611,9 +5413,13 @@ def editar_peca(id):
 def excluir_peca(id):
     peca = db.session.get(ItemEstoque, id)
     if peca:
+        cod = peca.codigo
         db.session.delete(peca)
         db.session.commit()
-        flash("Peça excluída!")
+        registrar_auditoria(
+            "Estoque", "Exclusão Peça", f"SKU {cod} removido."
+        )
+        flash("Peça excluída do estoque.")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
@@ -4621,62 +5427,73 @@ def excluir_peca(id):
 @requer_login
 def excel_estoque():
     pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
-    colunas = [
-        "Código",
-        "Peça",
-        "Categoria",
-        "Localização",
-        "Saldo",
-        "Mínimo",
-        "Status",
-        "Atualização",
-    ]
-    dados = [
-        {
-            "Código": p.codigo,
-            "Peça": p.nome,
-            "Categoria": p.categoria,
-            "Localização": p.localizacao,
-            "Saldo": p.quantidade,
-            "Mínimo": p.estoque_minimo,
-            "Status": (
-                "Baixo Estoque"
-                if p.quantidade <= p.estoque_minimo
-                else "Normal"
-            ),
-            "Atualização": p.ultima_atualizacao,
-        }
-        for p in pecas
-    ]
-    return gerar_excel(
-        pd.DataFrame(dados, columns=colunas),
-        "Estoque",
-        "estoque_manutencao",
-        coluna_status="Status",
+    df = pd.DataFrame(
+        [
+            {
+                "Código": p.codigo,
+                "Peça": p.nome,
+                "Categoria": p.categoria,
+                "Localização": p.localizacao,
+                "Saldo": p.quantidade,
+                "Estoque Mínimo": p.estoque_minimo,
+                "Status": (
+                    "Baixo Estoque"
+                    if p.quantidade <= p.estoque_minimo
+                    else "Normal"
+                ),
+                "Última Atualização": p.ultima_atualizacao,
+            }
+            for p in pecas
+        ],
+        columns=[
+            "Código",
+            "Peça",
+            "Categoria",
+            "Localização",
+            "Saldo",
+            "Estoque Mínimo",
+            "Status",
+            "Última Atualização",
+        ],
     )
+    return gerar_excel(
+        df, "Estoque_Manutencao", "estoque_jamaica", coluna_status="Status"
+    )
+
+
+# ==============================================================================
+# ROTAS DE AÇÃO DO SPARE PARTS & QR CODES
+# ==============================================================================
+@app.route("/spare-parts/qrcodes")
+@requer_login
+def etiquetas_qrcode():
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
+    return renderizar(HTML_QRCODES, maquinas=maquinas)
 
 
 @app.route("/spare-parts/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_maquina_spare():
-    maquina = request.form.get("maquina", "").strip()
-    modelo = request.form.get("modelo", "").strip()
-    if maquina and modelo:
-        db.session.add(
-            MaquinaSpare(
-                maquina=maquina,
-                modelo=modelo,
-                setor=request.form.get("setor", "").strip(),
-                pecas_necessarias=request.form.get(
-                    "pecas_necessarias", ""
-                ).strip(),
-            )
+    maquina = request.form.get("maquina", "").strip()[:150]
+    modelo = request.form.get("modelo", "").strip()[:100]
+    if not maquina or not modelo:
+        flash("Máquina e Modelo são obrigatórios.")
+        return redirect(url_for("central_gestao", tab="spare"))
+    db.session.add(
+        MaquinaSpare(
+            maquina=maquina,
+            modelo=modelo,
+            setor=request.form.get("setor", "").strip()[:100],
+            pecas_necessarias=request.form.get(
+                "pecas_necessarias", ""
+            ).strip(),
         )
-        db.session.commit()
-        registrar_auditoria(
-            "Spare Parts", "Cadastro Ativo", f"Máquina {maquina} ({modelo})"
-        )
-        flash("Equipamento cadastrado!")
+    )
+    db.session.commit()
+    registrar_auditoria(
+        "Spare Parts", "Ativo Cadastrado", f"Máquina {maquina} ({modelo})"
+    )
+    flash(f"Equipamento '{maquina}' cadastrado com sucesso!")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
@@ -4687,63 +5504,65 @@ def editar_maquina_spare(id):
     if not maq:
         flash("Equipamento não encontrado.")
         return redirect(url_for("central_gestao", tab="spare"))
-
-    maquina = request.form.get("maquina", "").strip()
-    modelo = request.form.get("modelo", "").strip()
+    maquina = request.form.get("maquina", "").strip()[:150]
+    modelo = request.form.get("modelo", "").strip()[:100]
     if not maquina or not modelo:
-        flash("Máquina e modelo são obrigatórios.")
+        flash("Máquina e Modelo são obrigatórios.")
         return redirect(url_for("central_gestao", tab="spare"))
-
-    try:
-        maq.maquina = maquina
-        maq.modelo = modelo
-        maq.setor = request.form.get("setor", "").strip()
-        maq.pecas_necessarias = request.form.get(
-            "pecas_necessarias", ""
-        ).strip()
-        db.session.commit()
-        registrar_auditoria(
-            "Spare Parts", "Edição Ativo", f"Máquina {maquina} ({modelo}) atualizada"
-        )
-        flash("Equipamento atualizado com sucesso!")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao atualizar equipamento.")
+    maq.maquina = maquina
+    maq.modelo = modelo
+    maq.setor = request.form.get("setor", "").strip()[:100]
+    maq.pecas_necessarias = request.form.get(
+        "pecas_necessarias", ""
+    ).strip()
+    db.session.commit()
+    registrar_auditoria(
+        "Spare Parts", "Ativo Editado", f"Máquina {maquina} ({modelo}) atualizada"
+    )
+    flash(f"Equipamento '{maquina}' atualizado com sucesso!")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
 @app.route("/spare-parts/excluir/<int:id>", methods=["POST"])
 @requer_login
 def excluir_maquina_spare(id):
-    maq = db.session.get(MaquinaSpare, id)
-    if maq:
-        db.session.delete(maq)
+    m = db.session.get(MaquinaSpare, id)
+    if m:
+        nome = m.maquina
+        db.session.delete(m)
         db.session.commit()
-        flash("Equipamento removido!")
+        registrar_auditoria(
+            "Spare Parts", "Ativo Excluído", f"Máquina {nome} removida."
+        )
+        flash("Equipamento removido do Spare Parts.")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
 @app.route("/spare-parts/peca/adicionar/<int:id>", methods=["POST"])
 @requer_login
 def adicionar_peca_spare(id):
-    maq = db.session.get(MaquinaSpare, id)
-    nome = request.form.get("nome_peca", "").strip()
-    if maq and nome:
-        try:
-            qtd = max(1, int(request.form.get("quantidade", 1)))
-        except ValueError:
-            qtd = 1
-        db.session.add(
-            PecaSpare(
-                maquina_spare_id=maq.id,
-                nome_peca=nome,
-                codigo_peca=request.form.get("codigo_peca", "").strip().upper(),
-                quantidade=qtd,
-                observacao=request.form.get("observacao", "").strip(),
-            )
+    m = db.session.get(MaquinaSpare, id)
+    if not m:
+        return redirect(url_for("central_gestao", tab="spare"))
+    nome_peca = request.form.get("nome_peca", "").strip()[:150]
+    if not nome_peca:
+        flash("O nome da peça é obrigatório.")
+        return redirect(url_for("central_gestao", tab="spare"))
+    try:
+        quantidade = max(1, int(request.form.get("quantidade", "1")))
+    except ValueError:
+        quantidade = 1
+    db.session.add(
+        PecaSpare(
+            maquina_spare_id=m.id,
+            nome_peca=nome_peca,
+            codigo_peca=request.form.get("codigo_peca", "").strip().upper()[:50],
+            quantidade=quantidade,
+            observacao=request.form.get("observacao", "").strip()[:200],
         )
-        db.session.commit()
-        flash("Peça vinculada à máquina!")
+    )
+    db.session.commit()
+    flash(f"Peça '{nome_peca}' adicionada ao equipamento '{m.maquina}'!")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
@@ -4754,43 +5573,46 @@ def excluir_peca_spare(id):
     if p:
         db.session.delete(p)
         db.session.commit()
-        flash("Peça removida!")
+        flash("Peça removida da lista técnica.")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/spare-parts/qrcodes")
-@requer_login
-def etiquetas_qrcode():
-    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
-    return render_template_string(HTML_QRCODES, maquinas=maquinas)
-
-
+# ==============================================================================
+# ROTAS DE AÇÃO DO PCM (MANUTENÇÃO PREVENTIVA)
+# ==============================================================================
 @app.route("/pcm/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_plano_pcm():
-    maquina = request.form.get("maquina", "").strip()
-    atividade = request.form.get("atividade", "").strip()
-    data_exec = parse_data_br(request.form.get("proxima_execucao", ""))
-    if maquina and atividade and data_exec:
-        db.session.add(
-            PlanoPreventivo(
-                maquina=maquina,
-                codigo_maquina=request.form.get("codigo_maquina", "")
-                .strip()
-                .upper(),
-                setor=request.form.get("setor", "").strip(),
-                atividade=atividade,
-                frequencia=request.form.get("frequencia", "Mensal"),
-                responsavel=request.form.get("responsavel", "").strip(),
-                proxima_execucao=data_exec.strftime("%d/%m/%Y"),
-                status="Agendado",
-            )
+    maquina = request.form.get("maquina", "").strip()[:150]
+    atividade = request.form.get("atividade", "").strip()[:2000]
+    proxima = parse_data_br(request.form.get("proxima_execucao", "").strip())
+    if not maquina or not atividade or not proxima:
+        flash("Máquina, Roteiro Preventivo e Data Programada são obrigatórios.")
+        return redirect(url_for("central_gestao", tab="pcm"))
+    frequencia = request.form.get("frequencia", "Mensal")
+    if frequencia not in FREQUENCIA_PCM:
+        frequencia = "Mensal"
+    db.session.add(
+        PlanoPreventivo(
+            maquina=maquina,
+            codigo_maquina=request.form.get("codigo_maquina", "")
+            .strip()
+            .upper()[:50],
+            setor=request.form.get("setor", "").strip()[:100],
+            atividade=atividade,
+            frequencia=frequencia,
+            responsavel=request.form.get("responsavel", "").strip()[:100],
+            proxima_execucao=proxima.strftime("%Y-%m-%d"),
+            status="Agendado",
         )
-        db.session.commit()
-        registrar_auditoria(
-            "PCM", "Novo Plano", f"Preventiva cadastrada para {maquina}"
-        )
-        flash("Plano preventivo cadastrado!")
+    )
+    db.session.commit()
+    registrar_auditoria(
+        "PCM",
+        "Novo Plano Preventivo",
+        f"Máquina {maquina} ({frequencia}) agendada para {proxima.strftime('%d/%m/%Y')}",
+    )
+    flash("Plano de manutenção preventiva cadastrado com sucesso!")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
@@ -4808,133 +5630,153 @@ def importar_excel_pcm():
         return redirect(url_for("central_gestao", tab="pcm"))
 
     try:
-        df = pd.read_excel(arquivo)
-    except Exception:
-        flash(
-            "Não foi possível ler o arquivo Excel. Verifique se está corrompido."
-        )
-        return redirect(url_for("central_gestao", tab="pcm"))
+        xl = pd.ExcelFile(arquivo)
+        inseridos = 0
+        ignorados = 0
+        hoje_dt = date.today()
 
-    if df.empty:
-        flash("A planilha enviada está vazia.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    col_map = {}
-    for col in df.columns:
-        c_norm = (
-            str(col)
-            .strip()
-            .lower()
-            .replace("á", "a")
-            .replace("ã", "a")
-            .replace("é", "e")
-            .replace("ê", "e")
-            .replace("í", "i")
-            .replace("ó", "o")
-            .replace("õ", "o")
-            .replace("ú", "u")
-            .replace("ç", "c")
-        )
-        if any(k in c_norm for k in ("maquina", "equipamento", "ativo")):
-            col_map.setdefault("maquina", col)
-        elif any(k in c_norm for k in ("tag", "codigo", "cod")):
-            col_map.setdefault("codigo", col)
-        elif any(k in c_norm for k in ("setor", "area", "linha")):
-            col_map.setdefault("setor", col)
-        elif any(
-            k in c_norm for k in ("frequencia", "periodicidade", "ciclo", "periodo")
-        ):
-            col_map.setdefault("frequencia", col)
-        elif any(
-            k in c_norm for k in ("data", "proxima", "execucao", "programada", "vencimento")
-        ):
-            col_map.setdefault("data", col)
-        elif any(k in c_norm for k in ("responsavel", "resp", "executante", "equipe")):
-            col_map.setdefault("responsavel", col)
-        elif any(
-            k in c_norm for k in ("atividade", "roteiro", "checklist", "descricao", "servico")
-        ):
-            col_map.setdefault("atividade", col)
-
-    if "maquina" not in col_map or "atividade" not in col_map:
-        flash(
-            "A planilha precisa conter ao menos as colunas 'Máquina' e"
-            " 'Atividade' (ou 'Roteiro')."
-        )
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    importados = 0
-    ignorados = 0
-    hoje_dt = date.today()
-
-    try:
-        for _, row in df.iterrows():
-            raw_maq = row.get(col_map["maquina"])
-            raw_ativ = row.get(col_map["atividade"])
-            if pd.isna(raw_maq) or pd.isna(raw_ativ):
-                ignorados += 1
-                continue
-
-            maquina = str(raw_maq).strip()
-            atividade = str(raw_ativ).strip()
-            if not maquina or not atividade or maquina.lower() == "nan":
-                ignorados += 1
-                continue
-
-            codigo = ""
-            if "codigo" in col_map and pd.notna(row.get(col_map["codigo"])):
-                codigo = str(row.get(col_map["codigo"])).strip().upper()
-
-            setor = ""
-            if "setor" in col_map and pd.notna(row.get(col_map["setor"])):
-                setor = str(row.get(col_map["setor"])).strip()
-
-            freq_raw = (
-                row.get(col_map["frequencia"]) if "frequencia" in col_map else ""
-            )
-            frequencia = normalizar_frequencia_pcm(
-                "" if pd.isna(freq_raw) else freq_raw
+        def norm_col(c):
+            return (
+                str(c or "")
+                .strip()
+                .lower()
+                .replace("á", "a")
+                .replace("ã", "a")
+                .replace("â", "a")
+                .replace("é", "e")
+                .replace("ê", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ô", "o")
+                .replace("õ", "o")
+                .replace("ú", "u")
+                .replace("ç", "c")
             )
 
-            resp = ""
-            if "responsavel" in col_map and pd.notna(
-                row.get(col_map["responsavel"])
-            ):
-                resp = str(row.get(col_map["responsavel"])).strip()
+        for aba in xl.sheet_names:
+            df = xl.parse(aba)
+            if df is None or df.empty:
+                continue
 
-            data_raw = row.get(col_map["data"]) if "data" in col_map else None
-            data_exec = parse_data_br(data_raw) or hoje_dt
+            col_map = {norm_col(c): c for c in df.columns}
 
-            db.session.add(
-                PlanoPreventivo(
-                    maquina=maquina[:150],
-                    codigo_maquina=codigo[:50],
-                    setor=setor[:100],
-                    atividade=atividade[:2000],
-                    frequencia=frequencia,
-                    responsavel=resp[:100],
-                    proxima_execucao=data_exec.strftime("%d/%m/%Y"),
-                    status="Agendado",
+            def pegar_coluna(candidatos):
+                for cand in candidatos:
+                    for k_norm, k_orig in col_map.items():
+                        if cand == k_norm or cand in k_norm:
+                            return k_orig
+                return None
+
+            c_maq = pegar_coluna(["maquina", "equipamento", "ativo"])
+            c_tag = pegar_coluna(["tag", "codigo", "cod"])
+            c_setor = pegar_coluna(["setor", "area", "linha"])
+            c_freq = pegar_coluna(
+                ["periodicidade", "frequencia", "ciclo", "intervalo"]
+            )
+            c_data = pegar_coluna(
+                [
+                    "proxima",
+                    "data",
+                    "execucao",
+                    "programada",
+                    "vencimento",
+                    "inicio",
+                ]
+            )
+            c_resp = pegar_coluna(
+                ["responsavel", "equipe", "executante", "especialidade"]
+            )
+            c_ativ = pegar_coluna(
+                [
+                    "roteiro",
+                    "atividade",
+                    "descricao",
+                    "checklist",
+                    "check-list",
+                    "servico",
+                    "tarefa",
+                ]
+            )
+
+            if not c_maq and not c_ativ:
+                continue
+
+            for _, row in df.iterrows():
+                maq_val = (
+                    str(row[c_maq]).strip()
+                    if c_maq and pd.notna(row[c_maq])
+                    else ""
                 )
+                ativ_val = (
+                    str(row[c_ativ]).strip()
+                    if c_ativ and pd.notna(row[c_ativ])
+                    else ""
+                )
+                if not maq_val and not ativ_val:
+                    continue
+                if not maq_val:
+                    maq_val = str(aba).strip()[:150] or "Equipamento PCM"
+                if not ativ_val:
+                    ativ_val = f"Inspeção preventiva — {maq_val}"
+
+                tag_val = (
+                    str(row[c_tag]).strip().upper()[:50]
+                    if c_tag and pd.notna(row[c_tag])
+                    else ""
+                )
+                setor_val = (
+                    str(row[c_setor]).strip()[:100]
+                    if c_setor and pd.notna(row[c_setor])
+                    else ""
+                )
+                freq_raw = (
+                    row[c_freq] if c_freq and pd.notna(row[c_freq]) else "Mensal"
+                )
+                freq_val = normalizar_frequencia_pcm(freq_raw)
+                resp_val = (
+                    str(row[c_resp]).strip()[:100]
+                    if c_resp and pd.notna(row[c_resp])
+                    else ""
+                )
+                data_raw = row[c_data] if c_data else None
+                data_dt = parse_data_br(data_raw) or hoje_dt
+
+                db.session.add(
+                    PlanoPreventivo(
+                        maquina=maq_val[:150],
+                        codigo_maquina=tag_val,
+                        setor=setor_val,
+                        atividade=ativ_val[:2000],
+                        frequencia=freq_val,
+                        responsavel=resp_val,
+                        proxima_execucao=data_dt.strftime("%Y-%m-%d"),
+                        status="Agendado",
+                    )
+                )
+                inseridos += 1
+
+        if inseridos == 0:
+            db.session.rollback()
+            flash(
+                "Nenhuma linha válida encontrada na planilha. Verifique se há"
+                " colunas como Máquina e Roteiro/Atividade."
             )
-            importados += 1
+            return redirect(url_for("central_gestao", tab="pcm"))
 
         db.session.commit()
-        if importados > 0:
-            registrar_auditoria(
-                "PCM",
-                "Importação Excel",
-                f"{importados} plano(s) preventivo(s) importado(s) via Excel.",
-            )
-            msg = f"{importados} plano(s) preventivo(s) importado(s) com sucesso!"
-            if ignorados:
-                msg += f" ({ignorados} linha(s) incompleta(s) ignorada(s))."
-            flash(msg)
-        else:
-            flash("Nenhuma linha válida encontrada na planilha.")
-    except Exception:
+        registrar_auditoria(
+            "PCM",
+            "Importação Excel PCM",
+            f"{inseridos} plano(s) preventivo(s) importado(s) do arquivo"
+            f" {arquivo.filename}",
+        )
+        flash(
+            f"Importação concluída! {inseridos} plano(s) preventivo(s)"
+            " cadastrado(s)."
+        )
+    except Exception as exc:
         db.session.rollback()
-        flash("Erro ao processar a importação da planilha PCM.")
+        flash(f"Erro ao ler a planilha Excel: {exc}")
 
     return redirect(url_for("central_gestao", tab="pcm"))
 
@@ -4943,53 +5785,63 @@ def importar_excel_pcm():
 @requer_login
 def gerar_os_pcm(id):
     plano = db.session.get(PlanoPreventivo, id)
-    if plano:
-        with os_lock:
-            nova = OrdemServico(
-                numero_os=gerar_numero_os(),
-                solicitante="PCM Automático",
-                setor=(
-                    f"{plano.maquina} ({plano.codigo_maquina})"
-                    if plano.codigo_maquina
-                    else plano.maquina
-                ),
-                titulo=f"Preventiva {plano.frequencia} — {plano.maquina}",
-                descricao=plano.atividade,
-                prioridade="Média",
-                responsavel=plano.responsavel or "Equipe Manutenção",
-                abertura=agora_formatado(),
-                status="Aberta",
-                tipo_manutencao="Preventiva",
-            )
-            db.session.add(nova)
-            db.session.commit()
-            registrar_auditoria(
-                "PCM",
-                "Geração O.S.",
-                f"O.S. {nova.numero_os} gerada do plano {plano.maquina}",
-            )
-        flash(f"O.S. {nova.numero_os} aberta automaticamente!")
-    return redirect(url_for("central_gestao", tab="pcm"))
+    if not plano:
+        return redirect(url_for("central_gestao", tab="pcm"))
+    with os_lock:
+        num_os = gerar_numero_os()
+        ordem = OrdemServico(
+            numero_os=num_os,
+            solicitante="PCM (Automático)",
+            setor=plano.maquina,
+            titulo=(
+                f"Manutenção Preventiva ({plano.frequencia}) —"
+                f" {plano.codigo_maquina or plano.maquina}"
+            ),
+            descricao=(
+                f"ROTEIRO PREVENTIVO PROGRAMADO:\n{plano.atividade}\n\nData"
+                f" Programada: {plano.proxima_execucao}"
+            ),
+            prioridade="Média",
+            responsavel=plano.responsavel or "Equipe Manutenção",
+            abertura=agora_formatado(),
+            status="Aberta",
+        )
+        db.session.add(ordem)
+        db.session.commit()
+    registrar_auditoria(
+        "PCM",
+        "O.S. Gerada via PCM",
+        f"O.S. {num_os} criada a partir do plano da máquina {plano.maquina}",
+    )
+    flash(
+        f"O.S. {num_os} aberta automaticamente para a preventiva de"
+        f" {plano.maquina}!"
+    )
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/pcm/concluir/<int:id>", methods=["POST"])
 @requer_login
 def concluir_plano_pcm(id):
     plano = db.session.get(PlanoPreventivo, id)
-    if plano:
-        base = max(
-            date.today(), parse_data_br(plano.proxima_execucao) or date.today()
-        )
-        proxima = avancar_data(base, plano.frequencia)
-        plano.proxima_execucao = proxima.strftime("%d/%m/%Y")
-        plano.status = "Agendado"
-        db.session.commit()
-        registrar_auditoria(
-            "PCM",
-            "Ciclo Concluído",
-            f"Plano {plano.maquina} reagendado para {plano.proxima_execucao}",
-        )
-        flash(f"Reagendado para {plano.proxima_execucao}!")
+    if not plano:
+        return redirect(url_for("central_gestao", tab="pcm"))
+    base = parse_data_br(plano.proxima_execucao) or date.today()
+    hoje = date.today()
+    proxima = avancar_data(max(base, hoje), plano.frequencia)
+    plano.proxima_execucao = proxima.strftime("%Y-%m-%d")
+    plano.status = "Agendado"
+    db.session.commit()
+    registrar_auditoria(
+        "PCM",
+        "Ciclo Concluído",
+        f"Preventiva {plano.maquina} concluída. Próxima:"
+        f" {proxima.strftime('%d/%m/%Y')}",
+    )
+    flash(
+        f"Ciclo concluído! Próxima preventiva reagendada para"
+        f" {proxima.strftime('%d/%m/%Y')}."
+    )
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
@@ -4997,19 +5849,28 @@ def concluir_plano_pcm(id):
 @requer_login
 def editar_plano_pcm(id):
     plano = db.session.get(PlanoPreventivo, id)
-    data_exec = parse_data_br(request.form.get("proxima_execucao", ""))
-    if plano and data_exec:
-        plano.maquina = request.form.get("maquina", "").strip()
-        plano.codigo_maquina = (
-            request.form.get("codigo_maquina", "").strip().upper()
-        )
-        plano.setor = request.form.get("setor", "").strip()
-        plano.frequencia = request.form.get("frequencia", "Mensal")
-        plano.responsavel = request.form.get("responsavel", "").strip()
-        plano.proxima_execucao = data_exec.strftime("%d/%m/%Y")
-        plano.atividade = request.form.get("atividade", "").strip()
-        db.session.commit()
-        flash("Plano atualizado!")
+    if not plano:
+        return redirect(url_for("central_gestao", tab="pcm"))
+    maquina = request.form.get("maquina", "").strip()[:150]
+    atividade = request.form.get("atividade", "").strip()[:2000]
+    proxima = parse_data_br(request.form.get("proxima_execucao", "").strip())
+    if not maquina or not atividade or not proxima:
+        flash("Máquina, Roteiro e Próxima Execução são obrigatórios.")
+        return redirect(url_for("central_gestao", tab="pcm"))
+    frequencia = request.form.get("frequencia", "Mensal")
+    if frequencia not in FREQUENCIA_PCM:
+        frequencia = "Mensal"
+    plano.maquina = maquina
+    plano.codigo_maquina = (
+        request.form.get("codigo_maquina", "").strip().upper()[:50]
+    )
+    plano.setor = request.form.get("setor", "").strip()[:100]
+    plano.frequencia = frequencia
+    plano.responsavel = request.form.get("responsavel", "").strip()[:100]
+    plano.proxima_execucao = proxima.strftime("%Y-%m-%d")
+    plano.atividade = atividade
+    db.session.commit()
+    flash(f"Planejamento preventivo '{maquina}' atualizado!")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
@@ -5020,7 +5881,7 @@ def excluir_plano_pcm(id):
     if plano:
         db.session.delete(plano)
         db.session.commit()
-        flash("Plano removido!")
+        flash("Plano preventivo removido.")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
@@ -5028,93 +5889,126 @@ def excluir_plano_pcm(id):
 @requer_login
 def excel_pcm():
     planos = PlanoPreventivo.query.all()
-    colunas = [
-        "Máquina",
-        "Tag",
-        "Setor",
-        "Frequência",
-        "Próxima Execução",
-        "Responsável",
-        "Status",
-        "Atividade",
-    ]
-    dados = [
-        {
-            "Máquina": p.maquina,
-            "Tag": p.codigo_maquina,
-            "Setor": p.setor,
-            "Frequência": p.frequencia,
-            "Próxima Execução": p.proxima_execucao,
-            "Responsável": p.responsavel,
-            "Status": status_plano(p),
-            "Atividade": p.atividade,
-        }
-        for p in planos
-    ]
+    df = pd.DataFrame(
+        [
+            {
+                "Máquina": p.maquina,
+                "Tag": p.codigo_maquina,
+                "Setor": p.setor,
+                "Frequência": p.frequencia,
+                "Próxima Execução": (
+                    parse_data_br(p.proxima_execucao).strftime("%d/%m/%Y")
+                    if parse_data_br(p.proxima_execucao)
+                    else p.proxima_execucao
+                ),
+                "Responsável": p.responsavel,
+                "Status": status_plano(p),
+                "Roteiro Preventivo": p.atividade,
+            }
+            for p in planos
+        ],
+        columns=[
+            "Máquina",
+            "Tag",
+            "Setor",
+            "Frequência",
+            "Próxima Execução",
+            "Responsável",
+            "Status",
+            "Roteiro Preventivo",
+        ],
+    )
     return gerar_excel(
-        pd.DataFrame(dados, columns=colunas),
-        "PCM",
-        "pcm_preventivas",
-        coluna_status="Status",
+        df, "PCM_Preventivas", "pcm_preventivas_jamaica", coluna_status="Status"
     )
 
 
+# ==============================================================================
+# ROTAS DE AÇÃO DE COMPRAS (S.C.)
+# ==============================================================================
 @app.route("/compras/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_compras():
-    numero_sc = request.form.get("numero_sc", "").strip() or gerar_numero_sc()
-    solicitante = request.form.get("solicitante", "").strip()
-    objeto = request.form.get("objeto_solicitacao", "").strip()
+    solicitante = request.form.get("solicitante", "").strip()[:100]
+    objeto = request.form.get("objeto_solicitacao", "").strip()[:250]
+    if not solicitante or not objeto:
+        flash("Preencha o Solicitante e o Objeto da Solicitação.")
+        return redirect(url_for("central_gestao", tab="compras"))
+    tipo_sc = request.form.get("tipo_sc", "S.C. Emergencial").strip()
+    if tipo_sc not in TIPOS_SC_VALIDOS:
+        tipo_sc = "S.C. Emergencial"
+    data_sol = parse_data_br(request.form.get("data_solicitacao", "").strip())
+    data_str = (
+        data_sol.strftime("%d/%m/%Y")
+        if data_sol
+        else date.today().strftime("%d/%m/%Y")
+    )
     descritivos = request.form.getlist("descritivo_material[]")
     quantidades = request.form.getlist("quantidade[]")
     unidades = request.form.getlist("unidade[]")
     links = request.form.getlist("link_referencia[]")
 
     itens_validos = []
-    for desc, qtd, unid, lnk in zip(descritivos, quantidades, unidades, links):
-        if desc.strip():
-            itens_validos.append({
-                "descritivo": desc.strip(),
-                "quantidade": max(1, int(qtd) if qtd.isdigit() else 1),
-                "unidade": unid.strip() or "Un",
-                "link_referencia": lnk.strip(),
-            })
-
-    if solicitante and objeto and itens_validos:
-        with sc_lock:
-            dt = parse_data_br(request.form.get("data_solicitacao", ""))
-            nova_sc = SolicitacaoCompra(
-                numero_sc=numero_sc,
-                tipo_sc=request.form.get("tipo_sc", "S.C. Emergencial"),
-                solicitante=solicitante,
-                setor_solicitante=request.form.get(
-                    "setor_solicitante", "Manutenção"
-                ).strip(),
-                responsaveis_duvidas=request.form.get(
-                    "responsaveis_duvidas", ""
-                ).strip(),
-                centro_custo=request.form.get("centro_custo", "").strip(),
-                objeto_solicitacao=objeto,
-                data_solicitacao=(
-                    dt.strftime("%d/%m/%Y")
-                    if dt
-                    else date.today().strftime("%d/%m/%Y")
-                ),
-                status_aprovacao="Aguardando Aprovação",
-            )
-            db.session.add(nova_sc)
-            db.session.flush()
-            for it in itens_validos:
-                db.session.add(
-                    ItemSolicitacaoCompra(solicitacao_id=nova_sc.id, **it)
+    for i, desc in enumerate(descritivos):
+        d_txt = desc.strip()
+        if d_txt:
+            try:
+                q_val = max(
+                    1, int(quantidades[i]) if i < len(quantidades) else 1
                 )
-            db.session.commit()
-            registrar_auditoria(
-                "Compras",
-                "Nova S.C.",
-                f"{numero_sc} criada ({len(itens_validos)} itens)",
+            except ValueError:
+                q_val = 1
+            u_val = (
+                unidades[i].strip()[:20]
+                if i < len(unidades) and unidades[i].strip()
+                else "Un"
             )
-        flash(f"Solicitação {numero_sc} registrada!")
+            l_val = links[i].strip() if i < len(links) else ""
+            itens_validos.append((d_txt, q_val, u_val, l_val))
+
+    if not itens_validos:
+        flash("Adicione pelo menos um item técnico válido na solicitação.")
+        return redirect(url_for("central_gestao", tab="compras"))
+
+    with sc_lock:
+        num_sc = (
+            request.form.get("numero_sc", "").strip()[:100]
+            or gerar_numero_sc()
+        )
+        nova_sc = SolicitacaoCompra(
+            numero_sc=num_sc,
+            tipo_sc=tipo_sc,
+            solicitante=solicitante,
+            setor_solicitante=request.form.get("setor_solicitante", "").strip()[
+                :100
+            ],
+            responsaveis_duvidas=request.form.get(
+                "responsaveis_duvidas", ""
+            ).strip()[:150],
+            centro_custo=request.form.get("centro_custo", "").strip()[:150],
+            objeto_solicitacao=objeto,
+            data_solicitacao=data_str,
+            status_aprovacao="Aguardando Aprovação",
+        )
+        db.session.add(nova_sc)
+        db.session.flush()
+        for d_txt, q_val, u_val, l_val in itens_validos:
+            db.session.add(
+                ItemSolicitacaoCompra(
+                    solicitacao_id=nova_sc.id,
+                    descritivo=d_txt,
+                    quantidade=q_val,
+                    unidade=u_val,
+                    link_referencia=l_val,
+                )
+            )
+        db.session.commit()
+    registrar_auditoria(
+        "Compras (S.C.)",
+        "Nova S.C.",
+        f"{num_sc} ({tipo_sc}) - {len(itens_validos)} item(ns)",
+    )
+    flash(f"Solicitação {num_sc} registrada com sucesso!")
     return redirect(url_for("central_gestao", tab="compras"))
 
 
@@ -5122,15 +6016,20 @@ def cadastrar_compras():
 @requer_login
 def atualizar_status_sc(id):
     sc = db.session.get(SolicitacaoCompra, id)
-    novo = request.form.get("status_aprovacao", "").strip()
-    if sc and novo in STATUS_SC_VALIDOS:
-        sc.status_aprovacao = novo
-        db.session.commit()
-        registrar_auditoria(
-            "Compras", "Status S.C.", f"{sc.numero_sc} alterada para {novo}"
+    if not sc:
+        return (
+            jsonify({"ok": False, "erro": "Solicitação não encontrada."}),
+            404,
         )
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "erro": "Inválido"}), 400
+    novo_status = request.form.get("status_aprovacao", "").strip()
+    if novo_status not in STATUS_SC_VALIDOS:
+        return jsonify({"ok": False, "erro": "Status inválido."}), 400
+    sc.status_aprovacao = novo_status
+    db.session.commit()
+    registrar_auditoria(
+        "Compras (S.C.)", "Status S.C.", f"{sc.numero_sc} -> {novo_status}"
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/compras/imprimir/<int:id>")
@@ -5138,9 +6037,8 @@ def atualizar_status_sc(id):
 def imprimir_sc(id):
     sc = db.session.get(SolicitacaoCompra, id)
     if not sc:
-        flash("S.C. não encontrada.")
         return redirect(url_for("central_gestao", tab="compras"))
-    return render_template_string(HTML_IMPRESSAO_SC, sc=sc)
+    return renderizar(HTML_IMPRESSAO_SC, sc=sc)
 
 
 @app.route("/compras/excluir/<int:id>", methods=["POST"])
@@ -5148,71 +6046,81 @@ def imprimir_sc(id):
 def excluir_compras(id):
     sc = db.session.get(SolicitacaoCompra, id)
     if sc:
+        num = sc.numero_sc
         db.session.delete(sc)
         db.session.commit()
-        flash("S.C. excluída!")
+        registrar_auditoria(
+            "Compras (S.C.)", "S.C. Excluída", f"{num} removida."
+        )
+        flash("Solicitação de compra excluída.")
     return redirect(url_for("central_gestao", tab="compras"))
 
 
 @app.route("/compras/excel")
 @requer_login
 def excel_compras():
-    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.asc()).all()
-    colunas = [
-        "Número S.C.",
-        "Criticidade",
-        "Solicitante",
-        "Centro de Custo",
-        "Objeto",
-        "Descritivo",
-        "Qtd",
-        "Unidade",
-        "Data",
-        "Status",
-    ]
-    dados = [
-        {
-            "Número S.C.": sc.numero_sc,
-            "Criticidade": sc.tipo_sc,
-            "Solicitante": sc.solicitante,
-            "Centro de Custo": sc.centro_custo,
-            "Objeto": sc.objeto_solicitacao,
-            "Descritivo": it.descritivo,
-            "Qtd": it.quantidade,
-            "Unidade": it.unidade,
-            "Data": sc.data_solicitacao,
-            "Status": sc.status_aprovacao,
-        }
-        for sc in compras
-        for it in sc.itens
-    ]
+    compras = SolicitacaoCompra.query.order_by(
+        SolicitacaoCompra.id.desc()
+    ).all()
+    linhas = []
+    for sc in compras:
+        for idx, it in enumerate(sc.itens, start=1):
+            linhas.append({
+                "Número S.C.": sc.numero_sc,
+                "Tipo de S.C.": sc.tipo_sc,
+                "Data": sc.data_solicitacao,
+                "Status": sc.status_aprovacao,
+                "Solicitante": sc.solicitante,
+                "Setor": sc.setor_solicitante,
+                "Centro de Custo": sc.centro_custo,
+                "Objeto": sc.objeto_solicitacao,
+                "Item #": idx,
+                "Descritivo": it.descritivo,
+                "Qtd": it.quantidade,
+                "Unid.": it.unidade,
+                "Referência / Link": it.link_referencia,
+            })
+    df = pd.DataFrame(
+        linhas,
+        columns=[
+            "Número S.C.",
+            "Tipo de S.C.",
+            "Data",
+            "Status",
+            "Solicitante",
+            "Setor",
+            "Centro de Custo",
+            "Objeto",
+            "Item #",
+            "Descritivo",
+            "Qtd",
+            "Unid.",
+            "Referência / Link",
+        ],
+    )
     return gerar_excel(
-        pd.DataFrame(dados, columns=colunas),
-        "Compras",
-        "solicitacoes_compras",
-        coluna_status="Criticidade",
+        df, "Solicitacoes_Compra", "compras_sc_jamaica", coluna_status="Status"
     )
 
 
 def obter_ip_local():
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
     except Exception:
         return "127.0.0.1"
 
 
 if __name__ == "__main__":
-    porta = int(os.environ.get("PORT", "5000"))
-    modo_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    porta = int(os.environ.get("PORT", 5000))
     ip_rede = obter_ip_local()
-    print("\n" + "=" * 64)
-    print("  CENTRAL DE MANUTENCAO JAMAICA - SERVIDOR INICIADO")
-    print(f"  Acesso neste PC : http://localhost:{porta}")
-    print(f"  Acesso Celular  : http://{ip_rede}:{porta}")
-    print("=" * 64 + "\n")
-    app.run(host="0.0.0.0", port=porta, debug=modo_debug)
-    
+    print("=" * 64)
+    print("CENTRAL DE MANUTENÇÃO JAMAICA — SERVIDOR INICIADO")
+    print(f"Acesso local : http://127.0.0.1:{porta}")
+    print(f"Acesso rede  : http://{ip_rede}:{porta}")
+    print(
+        f"Banco ativo  : {'PostgreSQL (Nuvem)' if IS_POSTGRES else DB_PATH}"
+    )
+    print("=" * 64)
+    app.run(host="0.0.0.0", port=porta, debug=False)
