@@ -21,6 +21,7 @@ from flask import (
     redirect,
     url_for,
     send_file,
+    send_from_directory,
     flash,
     session,
     get_flashed_messages,
@@ -37,7 +38,17 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 # ==============================================================================
 DB_PATH = os.path.join(BASE_DIR, "os.db")
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+EVIDENCIAS_DIR = os.path.join(BASE_DIR, "uploads", "evidencias_os")
 os.makedirs(BACKUP_DIR, exist_ok=True)
+os.makedirs(EVIDENCIAS_DIR, exist_ok=True)
+
+EXTENSOES_EVIDENCIA = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+TAMANHO_MAX_EVIDENCIA = 6 * 1024 * 1024  # 6 MB
 
 
 def obter_database_uri():
@@ -80,6 +91,7 @@ app.config["SECRET_KEY"] = carregar_chave_secreta()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 8 * 3600
+app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 app.config["SQLALCHEMY_DATABASE_URI"] = app_db_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
@@ -312,6 +324,8 @@ class OrdemServico(db.Model):
     horas_trabalhadas = db.Column(db.Float, default=0.0)
     observacao_tecnica = db.Column(db.Text, default="")
     motivo_pausa = db.Column(db.String(200), default="")
+    evidencia_imagem = db.Column(db.String(255), default="")
+    evidencia_nome = db.Column(db.String(255), default="")
 
 
 class ItemEstoque(db.Model):
@@ -470,6 +484,20 @@ def inicializar_banco():
                     " VARCHAR(200) DEFAULT ''"
                 )
             )
+        if "evidencia_imagem" not in cols:
+            db.session.execute(
+                text(
+                    "ALTER TABLE ordens_servico ADD COLUMN evidencia_imagem"
+                    " VARCHAR(255) DEFAULT ''"
+                )
+            )
+        if "evidencia_nome" not in cols:
+            db.session.execute(
+                text(
+                    "ALTER TABLE ordens_servico ADD COLUMN evidencia_nome"
+                    " VARCHAR(255) DEFAULT ''"
+                )
+            )
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -534,6 +562,49 @@ def agora_formatado():
 
 def hoje_iso():
     return date.today().strftime("%Y-%m-%d")
+
+
+def salvar_evidencia_os(arquivo, numero_os):
+    if not arquivo or not arquivo.filename:
+        return "", "", None
+
+    nome_orig = os.path.basename(arquivo.filename).strip()
+    ext = os.path.splitext(nome_orig)[1].lower()
+    if ext not in EXTENSOES_EVIDENCIA:
+        return "", "", "Formato de imagem inválido. Use PNG, JPG, JPEG ou WEBP."
+
+    conteudo = arquivo.read()
+    if not conteudo:
+        return "", "", "O arquivo de evidência está vazio."
+    if len(conteudo) > TAMANHO_MAX_EVIDENCIA:
+        return "", "", "A imagem de evidência excede o limite de 6 MB."
+
+    eh_png = conteudo.startswith(b"\x89PNG\r\n\x1a\n")
+    eh_jpg = conteudo.startswith(b"\xff\xd8\xff")
+    eh_webp = conteudo.startswith(b"RIFF") and conteudo[8:12] == b"WEBP"
+    if not (eh_png or eh_jpg or eh_webp):
+        return "", "", "Arquivo não parece ser uma imagem válida."
+
+    os.makedirs(EVIDENCIAS_DIR, exist_ok=True)
+    slug_os = re.sub(r"[^A-Za-z0-9_-]", "_", numero_os or "os")
+    nome_seguro = f"os_{slug_os}_{secrets.token_hex(6)}{ext}"
+    destino = os.path.join(EVIDENCIAS_DIR, nome_seguro)
+    with open(destino, "wb") as f:
+        f.write(conteudo)
+
+    return nome_seguro, nome_orig[:200], None
+
+
+def remover_evidencia_os(nome_arquivo):
+    if not nome_arquivo:
+        return
+    nome_limpo = os.path.basename(nome_arquivo)
+    caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
+    if os.path.exists(caminho):
+        try:
+            os.remove(caminho)
+        except OSError:
+            pass
 
 
 def gerar_numero_os():
@@ -650,6 +721,12 @@ def proteger_csrf():
         )
         return redirect(request.referrer or url_for("dashboard"))
     return None
+
+
+@app.errorhandler(413)
+def arquivo_muito_grande(e):
+    flash("Arquivo enviado excede o tamanho máximo permitido (12 MB).")
+    return redirect(request.referrer or url_for("dashboard"))
 
 
 @app.after_request
@@ -1226,6 +1303,42 @@ tr.detalhe td {
 tr.detalhe p { white-space: pre-wrap; margin: 6px 0 0; overflow-wrap: break-word; }
 .vazio { text-align: center; padding: 32px !important; color: var(--mt); }
 tr.sem-resultado { display: none; }
+
+/* EVIDÊNCIA FOTOGRÁFICA */
+.evidencia-box {
+    margin-top: 12px;
+    padding: 12px;
+    background: #14171f;
+    border: 1px solid var(--bd);
+    border-radius: 10px;
+}
+.evidencia-thumb {
+    display: block;
+    max-width: 280px;
+    max-height: 190px;
+    width: auto;
+    height: auto;
+    border-radius: 8px;
+    border: 1px solid var(--bd);
+    margin-top: 8px;
+    object-fit: cover;
+}
+.preview-evidencia-box {
+    margin-top: 10px;
+    padding: 10px;
+    background: #0c0e12;
+    border: 1px dashed var(--bd);
+    border-radius: 10px;
+    display: none;
+}
+.preview-evidencia-box img {
+    display: block;
+    max-width: 240px;
+    max-height: 150px;
+    border-radius: 8px;
+    margin-top: 6px;
+    object-fit: cover;
+}
 
 /* BADGES E STATUS */
 .status {
@@ -1821,6 +1934,41 @@ if(verSenha){verSenha.addEventListener('click',()=>{const s=$('#senha');if(s)s.t
 const modalFinalizar = $('#modalFinalizar');
 if(modalFinalizar){
     const formFinalizar = $('#formFinalizar');
+    const inputEvidencia = $('#evidenciaFotoInput');
+    const previewBox = $('#previewEvidenciaBox');
+    const previewImg = $('#previewEvidenciaImg');
+    const previewNome = $('#previewEvidenciaNome');
+    let previewUrlAtual = '';
+
+    const limparPreviewEvidencia = () => {
+        if (inputEvidencia) inputEvidencia.value = '';
+        if (previewUrlAtual) {
+            URL.revokeObjectURL(previewUrlAtual);
+            previewUrlAtual = '';
+        }
+        if (previewImg) previewImg.src = '';
+        if (previewNome) previewNome.textContent = '';
+        if (previewBox) previewBox.style.display = 'none';
+    };
+
+    if (inputEvidencia) {
+        inputEvidencia.addEventListener('change', () => {
+            if (previewUrlAtual) {
+                URL.revokeObjectURL(previewUrlAtual);
+                previewUrlAtual = '';
+            }
+            const arq = inputEvidencia.files && inputEvidencia.files[0];
+            if (!arq) {
+                if (previewBox) previewBox.style.display = 'none';
+                return;
+            }
+            previewUrlAtual = URL.createObjectURL(arq);
+            if (previewImg) previewImg.src = previewUrlAtual;
+            if (previewNome) previewNome.textContent = arq.name;
+            if (previewBox) previewBox.style.display = 'block';
+        });
+    }
+
     $$('.btn-abrir-finalizar').forEach(btn => {
         btn.addEventListener('click', () => {
             formFinalizar.action = btn.dataset.url;
@@ -1830,10 +1978,14 @@ if(modalFinalizar){
             if($('#obsTecnica')) $('#obsTecnica').value = '';
             if($('#pecaUtilizada')) $('#pecaUtilizada').value = '';
             if($('#qtdPecaUtilizada')) $('#qtdPecaUtilizada').value = '1';
+            limparPreviewEvidencia();
             modalFinalizar.classList.add('aberto');
         });
     });
-    const fecharFin = () => modalFinalizar.classList.remove('aberto');
+    const fecharFin = () => {
+        limparPreviewEvidencia();
+        modalFinalizar.classList.remove('aberto');
+    };
     $$('[data-fechar-fin]', modalFinalizar).forEach(b => b.addEventListener('click', fecharFin));
     modalFinalizar.addEventListener('mousedown', e => { if(e.target === modalFinalizar) fecharFin(); });
 }
@@ -2105,6 +2257,18 @@ HTML_OS = r"""
                         {% if os.funcionarios %}
                         <p style="margin-top:8px"><strong>Executantes:</strong> {{os.funcionarios}} &nbsp;|&nbsp; <strong>Horas Apontadas:</strong> {{fmt_hhmm(os.horas_trabalhadas)}}</p>
                         {% endif %}
+                        {% if os.evidencia_imagem %}
+                        <div class="evidencia-box">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                                <strong style="color:#60a5fa">📷 Evidência do Trabalho Feito:</strong>
+                                <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer" class="botao imprimir" style="padding:5px 10px;font-size:11.5px">🔍 Abrir Foto Completa</a>
+                            </div>
+                            <span class="muted" style="display:block;margin-top:4px">{{os.evidencia_nome or os.evidencia_imagem}}</span>
+                            <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer">
+                                <img src="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" alt="Evidência da O.S. {{os.numero_os}}" class="evidencia-thumb">
+                            </a>
+                        </div>
+                        {% endif %}
                     </td>
                 </tr>
             {% else %}
@@ -2120,8 +2284,8 @@ HTML_OS = r"""
 <div class="overlay" id="modalFinalizar">
     <div class="modal">
         <h3>🔧 Finalizar Ordem de Serviço <span id="osNumeroFinalizar"></span></h3>
-        <p class="muted">Registre o apontamento de horas, equipe envolvida e solução aplicada.</p>
-        <form id="formFinalizar" method="POST">
+        <p class="muted">Registre o apontamento de horas, equipe envolvida, solução aplicada e foto de evidência.</p>
+        <form id="formFinalizar" method="POST" enctype="multipart/form-data">
             <div class="campo">
                 <label>Tipo de Manutenção *</label>
                 <div class="seg">
@@ -2147,6 +2311,14 @@ HTML_OS = r"""
             <div class="campo">
                 <label>Laudo Técnico / Serviço Realizado</label>
                 <textarea name="observacao_tecnica" id="obsTecnica" rows="3" placeholder="Descreva o que foi reparado, ajustado ou substituído..."></textarea>
+            </div>
+            <div class="campo">
+                <label>📷 Evidência do Trabalho Feito (Foto / Câmera — PNG, JPG, WEBP até 6 MB)</label>
+                <input type="file" name="evidencia_foto" id="evidenciaFotoInput" accept="image/png,image/jpeg,image/webp">
+                <div class="preview-evidencia-box" id="previewEvidenciaBox">
+                    <span class="muted" id="previewEvidenciaNome"></span>
+                    <img id="previewEvidenciaImg" src="" alt="Prévia da evidência">
+                </div>
             </div>
             {% if pecas_estoque %}
             <div class="form-grid" style="margin-top:14px">
@@ -2982,11 +3154,13 @@ table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
 td, th { border: 1px solid #333; padding: 6px 8px; text-align: left; vertical-align: top; }
 th { background: #f0f0f0; font-size: 11px; font-weight: bold; width: 22%; }
 .area { min-height: 55px; white-space: pre-wrap; }
-.area-grande { min-height: 90px; white-space: pre-wrap; }
+.area-grande { min-height: 75px; white-space: pre-wrap; }
 .secao-titulo { font-weight: bold; font-size: 12px; background: #e5e7eb; padding: 5px 8px; border: 1px solid #333; margin-bottom: -1px; }
+.evidencia-print { border: 1px solid #333; padding: 8px; margin-bottom: 10px; background: #fafafa; text-align: center; }
+.evidencia-print img { max-width: 100%; max-height: 210px; height: auto; border: 1px solid #666; }
 .check-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 8px; border: 1px solid #333; margin-bottom: 10px; background: #fafafa; font-size: 11px; }
 .check-item { display: flex; align-items: center; gap: 6px; }
-.assinaturas { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 25px; text-align: center; }
+.assinaturas { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 22px; text-align: center; }
 .assinaturas div { border-top: 1px solid #111; padding-top: 6px; font-size: 11px; font-weight: bold; }
 @media print { .no-print { display: none !important; } body { padding: 0; } }
 </style></head><body>
@@ -3016,6 +3190,13 @@ th { background: #f0f0f0; font-size: 11px; font-weight: bold; width: 22%; }
             <tr><th>Equipe Executante</th><td>{{os.funcionarios or '___________________________'}}</td><th>Tempo Apontado</th><td>{{fmt_hhmm(os.horas_trabalhadas) if os.horas_trabalhadas else '____h ____min'}}</td></tr>
             <tr><th>Laudo Técnico / Serviço Efetuado</th><td colspan="3" class="area-grande">{{os.observacao_tecnica or ''}}</td></tr>
         </table>
+        {% if os.evidencia_imagem %}
+        <div class="secao-titulo">EVIDÊNCIA FOTOGRÁFICA DO SERVIÇO EXECUTADO</div>
+        <div class="evidencia-print">
+            <img src="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" alt="Evidência da O.S. {{os.numero_os}}">
+            <div style="font-size:10px;color:#444;margin-top:4px">Arquivo: {{os.evidencia_nome or os.evidencia_imagem}}</div>
+        </div>
+        {% endif %}
         <div class="secao-titulo">3. CHECK-LIST DE LIBERAÇÃO E SEGURANÇA (LOTO)</div>
         <div class="check-grid">
             <div class="check-item">☐ Bloqueio de Energia (LOTO)</div>
@@ -3195,6 +3376,20 @@ def healthcheck():
     return jsonify({"status": "ok", "timestamp": agora_formatado()}), 200
 
 
+@app.route("/os/evidencia/<path:filename>")
+def ver_evidencia_os(filename):
+    nome_limpo = os.path.basename(filename)
+    ext = os.path.splitext(nome_limpo)[1].lower()
+    if ext not in EXTENSOES_EVIDENCIA:
+        return "Arquivo inválido", 400
+    caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
+    if not os.path.isfile(caminho):
+        return "Evidência não encontrada", 404
+    return send_from_directory(
+        EVIDENCIAS_DIR, nome_limpo, mimetype=EXTENSOES_EVIDENCIA[ext]
+    )
+
+
 @app.route("/api/os/novas")
 def api_os_novas():
     try:
@@ -3346,6 +3541,8 @@ def criar():
                 horas_trabalhadas=0.0,
                 observacao_tecnica="",
                 motivo_pausa="",
+                evidencia_imagem="",
+                evidencia_nome="",
             )
             db.session.add(nova)
             db.session.commit()
@@ -3418,6 +3615,14 @@ def finalizar(id):
         flash("Informe o tempo trabalhado.")
         return redirect(url_for("dashboard"))
 
+    arquivo_evidencia = request.files.get("evidencia_foto")
+    ev_arquivo, ev_nome, erro_ev = salvar_evidencia_os(
+        arquivo_evidencia, ordem.numero_os
+    )
+    if erro_ev:
+        flash(erro_ev)
+        return redirect(url_for("dashboard"))
+
     peca_id_str = request.form.get("peca_id", "").strip()
     try:
         peca_qtd = max(1, int(request.form.get("peca_qtd", 1)))
@@ -3430,6 +3635,7 @@ def finalizar(id):
                 peca = db.session.get(ItemEstoque, int(peca_id_str))
                 if peca:
                     if peca.quantidade < peca_qtd:
+                        remover_evidencia_os(ev_arquivo)
                         flash(
                             f"Saldo insuficiente de '{peca.nome}' (Disponível:"
                             f" {peca.quantidade})."
@@ -3462,15 +3668,19 @@ def finalizar(id):
             ordem.horas_trabalhadas = horas_decimais
             ordem.observacao_tecnica = obs_tecnica
             ordem.tempo_total = calcular_tempo_total(ordem.abertura, ordem.finalizacao)
+            if ev_arquivo:
+                remover_evidencia_os(ordem.evidencia_imagem)
+                ordem.evidencia_imagem = ev_arquivo
+                ordem.evidencia_nome = ev_nome
             db.session.commit()
-            registrar_auditoria(
-                "Ordens de Serviço",
-                "Finalização O.S.",
-                f"O.S. {ordem.numero_os} finalizada por {ordem.funcionarios}",
-            )
+            det_aud = f"O.S. {ordem.numero_os} finalizada por {ordem.funcionarios}"
+            if ev_arquivo:
+                det_aud += f" com evidência ({ev_nome})"
+            registrar_auditoria("Ordens de Serviço", "Finalização O.S.", det_aud)
         flash(f"O.S. {ordem.numero_os} finalizada com sucesso!")
     except Exception:
         db.session.rollback()
+        remover_evidencia_os(ev_arquivo)
         flash("Erro ao finalizar O.S.")
     return redirect(url_for("dashboard"))
 
@@ -3480,8 +3690,10 @@ def excluir(id):
     ordem = db.session.get(OrdemServico, id)
     if ordem:
         num = ordem.numero_os
+        ev_antiga = ordem.evidencia_imagem
         db.session.delete(ordem)
         db.session.commit()
+        remover_evidencia_os(ev_antiga)
         registrar_auditoria(
             "Ordens de Serviço", "Exclusão O.S.", f"O.S. {num} excluída permanentemente"
         )
@@ -3499,6 +3711,7 @@ def excel():
         "Causa",
         "Descrição",
         "Laudo Técnico",
+        "Evidência",
         "Prioridade",
         "Responsável",
         "Tipo Manutenção",
@@ -3517,6 +3730,7 @@ def excel():
             "Causa": o.titulo or "",
             "Descrição": o.descricao or "",
             "Laudo Técnico": o.observacao_tecnica or "",
+            "Evidência": o.evidencia_nome or ("Sim" if o.evidencia_imagem else ""),
             "Prioridade": o.prioridade,
             "Responsável": o.responsavel or "",
             "Tipo Manutenção": o.tipo_manutencao or "",
@@ -4417,20 +4631,24 @@ def cadastrar_compras():
                 request.form.getlist("link_referencia[]"),
             ):
                 if d.strip():
+                    try:
+                        qtd_int = int(q)
+                    except ValueError:
+                        qtd_int = 1
                     db.session.add(
                         ItemSolicitacaoCompra(
                             solicitacao_id=sc.id,
                             descritivo=d.strip(),
-                            quantidade=max(1, int(q or 1)),
-                            unidade=u or "Un",
+                            quantidade=qtd_int,
+                            unidade=u.strip() or "Un",
                             link_referencia=l.strip(),
                         )
                     )
             db.session.commit()
             registrar_auditoria(
-                "Compras", "Nova S.C.", f"S.C. {sc.numero_sc} registrada ({obj})"
+                "Compras (S.C.)", "Criação S.C.", f"{sc.numero_sc} — {obj}"
             )
-        flash("Solicitação de Compra registrada!")
+        flash(f"Solicitação {sc.numero_sc} cadastrada!")
     except Exception:
         db.session.rollback()
         flash("Erro ao registrar S.C.")
@@ -4442,16 +4660,22 @@ def cadastrar_compras():
 def atualizar_status_sc(id):
     sc = db.session.get(SolicitacaoCompra, id)
     if not sc:
-        return jsonify({"ok": False}), 404
-    novo_status = request.form.get(
-        "status_aprovacao", "Aguardando Aprovação"
-    ).strip()
-    sc.status_aprovacao = novo_status
-    db.session.commit()
-    registrar_auditoria(
-        "Compras", "Atualização Status S.C.", f"S.C. {sc.numero_sc} alterada para {novo_status}"
-    )
-    return jsonify({"ok": True})
+        return jsonify({"ok": False, "erro": "S.C. não encontrada."}), 404
+    novo_status = request.form.get("status_aprovacao", "").strip()
+    if novo_status not in STATUS_SC_VALIDOS:
+        return jsonify({"ok": False, "erro": "Status inválido."}), 400
+    try:
+        sc.status_aprovacao = novo_status
+        db.session.commit()
+        registrar_auditoria(
+            "Compras (S.C.)",
+            "Alteração Status S.C.",
+            f"{sc.numero_sc} alterada para {novo_status}",
+        )
+        return jsonify({"ok": True, "status": novo_status})
+    except Exception:
+        db.session.rollback()
+        return jsonify({"ok": False, "erro": "Erro interno."}), 500
 
 
 @app.route("/compras/excluir/<int:id>", methods=["POST"])
@@ -4462,7 +4686,7 @@ def excluir_compras(id):
         num = sc.numero_sc
         db.session.delete(sc)
         db.session.commit()
-        registrar_auditoria("Compras", "Exclusão S.C.", f"S.C. {num} excluída")
+        registrar_auditoria("Compras (S.C.)", "Exclusão S.C.", f"{num} excluída")
         flash("S.C. excluída!")
     return redirect(url_for("central_gestao"))
 
@@ -4470,45 +4694,57 @@ def excluir_compras(id):
 @app.route("/compras/excel")
 @requer_login
 def excel_compras():
-    compras = SolicitacaoCompra.query.all()
-    dados = [
-        {
-            "S.C.": sc.numero_sc,
-            "Tipo": sc.tipo_sc,
-            "Solicitante": sc.solicitante,
-            "Centro Custo": sc.centro_custo,
-            "Objeto": sc.objeto_solicitacao,
-            "Status": sc.status_aprovacao,
-        }
-        for sc in compras
-    ]
-    registrar_auditoria("Relatórios", "Exportação Excel Compras", "Relatório de S.C. gerado.")
+    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.asc()).all()
+    dados = []
+    for sc in compras:
+        for it in sc.itens:
+            dados.append({
+                "Código S.C.": sc.numero_sc,
+                "Criticidade": sc.tipo_sc,
+                "Data": sc.data_solicitacao,
+                "Solicitante": sc.solicitante,
+                "Centro Custo": sc.centro_custo,
+                "Objeto": sc.objeto_solicitacao,
+                "Item": it.descritivo,
+                "Qtd": it.quantidade,
+                "Unid.": it.unidade,
+                "Link / Ref": it.link_referencia or "",
+                "Status": sc.status_aprovacao,
+            })
+    registrar_auditoria(
+        "Relatórios", "Exportação Excel Compras", "Planilha de S.C. gerada."
+    )
     return gerar_excel(
-        pd.DataFrame(dados), "Compras", "compras", coluna_status="Status"
+        pd.DataFrame(dados),
+        "Solicitacoes Compras",
+        "solicitacoes_compras",
+        coluna_status="Status",
     )
 
 
+# ==============================================================================
+# INICIALIZAÇÃO DO SERVIDOR
+# ==============================================================================
 def obter_ip_local():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
         s.close()
-    return ip
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 
 if __name__ == "__main__":
-    modo_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    PORTA = int(os.environ.get("PORT", "5000"))
+    porta = int(os.environ.get("PORT", 5000))
     ip_local = obter_ip_local()
-
-    print(f"\n========================================================\n")
-    print(f"🚀 Servidor Web rodando com sucesso!")
-    print(f"💻 Neste computador (Local): http://127.0.0.1:{PORTA}/")
-    print(f"🌐 Na rede (Outros PCs / Celulares): http://{ip_local}:{PORTA}/")
-    print(f"========================================================\n")
-
-    app.run(debug=modo_debug, host="0.0.0.0", port=PORTA)
+    print("=" * 65)
+    print("🚀 CENTRAL DE MANUTENÇÃO — JAMAICA INICIADA")
+    print(f"📍 Local:   http://127.0.0.1:{porta}")
+    print(f"🌐 na Rede: http://{ip_local}:{porta}")
+    print(
+        f"🗄️ Banco:   {'PostgreSQL (Nuvem)' if IS_POSTGRES else 'SQLite Local (' + DB_PATH + ')'}"
+    )
+    print("=" * 65)
+    app.run(host="0.0.0.0", port=porta, debug=False)
