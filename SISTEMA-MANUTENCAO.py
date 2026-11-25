@@ -536,7 +536,7 @@ def manifest_pwa():
 @app.route("/sw.js")
 def service_worker():
     sw_code = """
-    const CACHE_NAME = 'manutencao-jamaica-v1';
+    const CACHE_NAME = 'manutencao-jamaica-v2';
     self.addEventListener('install', event => {
         self.skipWaiting();
     });
@@ -944,7 +944,7 @@ CSS_BASE = r"""
     --btn: linear-gradient(135deg, #ea580c, #f97316 60%, #fb923c);
     --r: 14px;
 }
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { scroll-behavior: smooth; overflow-x: clip; }
 body {
     margin: 0;
@@ -1100,6 +1100,9 @@ body {
 .botao-sair { border-color: rgba(239, 68, 68, 0.55); color: #fecaca; background: rgba(127, 29, 29, 0.4); }
 .botao-sair:hover { background: rgba(185, 28, 28, 0.65); transform: translateY(-2px); }
 
+/* BARRA DE NAVEGAÇÃO INFERIOR MOBILE (APP-LIKE) */
+.mobile-bottom-nav { display: none; }
+
 /* SISTEMA DE ABAS INTERNAS (CENTRAL DE GESTÃO) */
 .sub-abas-nav {
     display: flex;
@@ -1248,6 +1251,7 @@ button, .botao {
 .limpar { background: #232733; color: #e5e7eb; border: 1px solid var(--bd); }
 .pausar { background: linear-gradient(135deg, #92400e, #d97706); }
 .imprimir { background: linear-gradient(135deg, #1d4ed8, #3b82f6); }
+.evidencia-btn { background: linear-gradient(135deg, #0f766e, #14b8a6); }
 .excluir {
     background: linear-gradient(135deg, #7f1d1d, #dc2626);
     box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
@@ -1303,6 +1307,7 @@ tr.detalhe td {
 tr.detalhe p { white-space: pre-wrap; margin: 6px 0 0; overflow-wrap: break-word; }
 .vazio { text-align: center; padding: 32px !important; color: var(--mt); }
 tr.sem-resultado { display: none; }
+.dica-mobile-card { display: none; }
 
 /* EVIDÊNCIA FOTOGRÁFICA */
 .evidencia-box {
@@ -1498,74 +1503,260 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
 
+/* ============================================================================
+   RESPONSIVIDADE MOBILE COMPLETA (CARDS, TOQUE AMPLO, BOTTOM BAR E BOTTOM SHEET)
+   ============================================================================ */
 @media (max-width: 860px) {
-    body { padding: 12px; padding-bottom: 80px; line-height: 1.5; font-size: 14px; }
-    .lobby-card { padding: 22px 16px; border-radius: 14px; }
-    .lobby-card h1 { font-size: 20px; }
-    .btn-entrar-lobby { width: 100%; }
-    .cabecalho { padding: 15px; gap: 12px; margin-bottom: 16px; border-radius: 12px; }
+    body {
+        padding: 10px 10px calc(86px + env(safe-area-inset-bottom, 0px));
+        line-height: 1.5;
+        font-size: 14px;
+    }
+
+    /* BARRA INFERIOR FIXA PARA NAVEGAÇÃO RÁPIDA COM O POLEGAR */
+    .mobile-bottom-nav {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 8500;
+        background: rgba(13, 15, 20, 0.96);
+        backdrop-filter: blur(12px);
+        border-top: 1px solid rgba(249, 115, 22, 0.35);
+        padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+        box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.75);
+    }
+    .mobile-bottom-nav a, .mobile-bottom-nav button {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        background: transparent;
+        border: 0;
+        border-radius: 10px;
+        color: var(--mt);
+        text-decoration: none;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 6px 4px;
+        min-height: 48px;
+        box-shadow: none;
+    }
+    .mobile-bottom-nav a.ativo {
+        color: var(--or2);
+        background: rgba(249, 115, 22, 0.14);
+    }
+    .mobile-bottom-nav .nav-ico { font-size: 18px; line-height: 1; }
+
+    .lobby-wrap { margin: 2vh auto; }
+    .lobby-card { padding: 22px 14px; border-radius: 14px; }
+    .lobby-card h1 { font-size: 19px; }
+    .lobby-acoes { flex-direction: column; }
+    .btn-entrar-lobby, .lobby-acoes .botao { width: 100%; min-height: 48px; }
+
+    .cabecalho { padding: 14px; gap: 10px; margin-bottom: 14px; border-radius: 12px; }
     .cabecalho-principal { width: 100%; }
-    .cabecalho-titulo { align-items: flex-start; gap: 10px; }
-    .logo-badge { width: 34px; height: 34px; font-size: 17px; border-radius: 8px; }
-    .cabecalho h1 { font-size: 16.5px; line-height: 1.3; letter-spacing: 0.2px; }
-    .cabecalho p { font-size: 12.5px; line-height: 1.4; }
-    .nav-abas { flex-direction: column; width: 100%; gap: 8px; margin-top: 12px; }
+    .cabecalho-titulo { align-items: center; gap: 10px; }
+    .logo-badge { width: 36px; height: 36px; font-size: 18px; border-radius: 9px; }
+    .cabecalho h1 { font-size: 16px; line-height: 1.25; letter-spacing: 0.2px; }
+    .cabecalho p { font-size: 12px; line-height: 1.35; }
+    .nav-abas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 7px; margin-top: 12px; }
     .aba, .botao-sair {
         white-space: normal;
         overflow-wrap: break-word;
-        line-height: 1.35;
+        line-height: 1.25;
         width: 100%;
-        justify-content: flex-start;
-        padding: 10px 12px;
-        font-size: 13px;
+        justify-content: center;
+        text-align: center;
+        padding: 10px 8px;
+        font-size: 12px;
+        min-height: 42px;
     }
-    .cabecalho-lado { width: 100%; align-items: stretch; }
-    .relogio { text-align: center; font-size: 12px; padding: 7px 12px; }
+    .cabecalho-lado { width: 100%; flex-direction: row; justify-content: space-between; align-items: center; }
+    .relogio { flex: 1; text-align: center; font-size: 11.5px; padding: 7px 10px; }
+    .cabecalho-lado .botao-sair { width: auto; padding: 7px 12px; min-height: 36px; }
 
-    .sub-abas-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 8px; margin-bottom: 16px; }
-    .sub-aba-btn { white-space: normal; overflow-wrap: break-word; line-height: 1.3; padding: 9px 10px; font-size: 12px; text-align: center; }
+    /* SUB-ABAS COM ROLAGEM HORIZONTAL SUAVE */
+    .sub-abas-nav {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        padding: 8px;
+        margin-bottom: 14px;
+        scrollbar-width: none;
+    }
+    .sub-abas-nav::-webkit-scrollbar { display: none; }
+    .sub-aba-btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 10px 14px;
+        font-size: 12.5px;
+        min-height: 42px;
+    }
 
-    .resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
-    .resumo-card { padding: 14px; border-radius: 12px; }
-    .resumo-card span { font-size: 10.5px; padding-right: 22px; line-height: 1.3; letter-spacing: 0.4px; }
-    .resumo-card strong { font-size: 24px; line-height: 1.2; }
-    .resumo-card small { font-size: 11.5px; line-height: 1.35; overflow-wrap: break-word; }
-    .icone { right: 11px; top: 11px; font-size: 17px; }
+    .resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 14px; }
+    .resumo-card { padding: 13px; border-radius: 12px; }
+    .resumo-card span { font-size: 10.5px; padding-right: 22px; line-height: 1.25; letter-spacing: 0.4px; }
+    .resumo-card strong { font-size: 23px; line-height: 1.2; }
+    .resumo-card small { font-size: 11px; line-height: 1.3; overflow-wrap: break-word; }
+    .icone { right: 10px; top: 10px; font-size: 16px; }
 
-    .card { padding: 15px; margin-bottom: 16px; border-radius: 12px; }
-    .card h2 { font-size: 16px; line-height: 1.3; }
-    details.card > summary { font-size: 15px; line-height: 1.35; }
-    details.card > .conteudo { margin-top: 14px; padding-top: 14px; }
+    .card { padding: 14px; margin-bottom: 14px; border-radius: 12px; }
+    .card h2 { font-size: 15.5px; line-height: 1.3; margin-bottom: 12px; }
+    details.card > summary { font-size: 15px; line-height: 1.35; min-height: 36px; }
+    details.card > .conteudo { margin-top: 12px; padding-top: 12px; }
 
-    input, textarea, select { font-size: 14px; padding: 10px 12px; }
-    button, .botao { font-size: 13px; padding: 10px 14px; }
+    /* EVITA ZOOM AUTOMÁTICO NO IOS/ANDROID AO FOCAR INPUTS */
+    input, textarea, select { font-size: 16px; padding: 11px 12px; min-height: 44px; }
+    button, .botao { font-size: 13.5px; padding: 11px 14px; min-height: 44px; }
 
-    .filtros { gap: 8px; margin-top: 12px; }
-    .chip { padding: 6px 12px; font-size: 12px; }
-    .filtros select { max-width: 100%; font-size: 12px; }
+    .seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .seg label { min-width: 0; padding: 11px 8px; font-size: 13px; }
 
-    .tabela-wrapper { border-radius: 10px; }
-    table { min-width: 680px; }
-    th, td { padding: 10px 9px; font-size: 12.5px; line-height: 1.4; }
-    th { font-size: 10.5px; letter-spacing: 0.5px; }
-    .status { padding: 4px 9px; font-size: 11px; }
-    .tipo-badge, .sc-badge-emergencial, .sc-badge-programada, .sc-badge-reposicao { padding: 4px 8px; font-size: 11px; }
-    .acoes { gap: 5px; }
-    .acoes button, .acoes .botao { padding: 7px 10px; font-size: 11.5px; }
-    tr.detalhe td { padding: 14px; font-size: 13px; line-height: 1.5; }
+    .acoes-topo { flex-direction: column; align-items: stretch; gap: 10px; }
+    .acoes-topo .excel, .acoes-topo .imprimir { width: 100%; }
+    .busca { min-width: 100%; flex-wrap: nowrap; }
+    .busca .limpar { flex-shrink: 0; padding: 10px 14px; }
 
-    .modal, .modal-alerta-os { padding: 18px; border-radius: 14px; max-height: 90vh; overflow-y: auto; }
+    .filtros {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        margin-top: 12px;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+    }
+    .filtros::-webkit-scrollbar { display: none; }
+    .filtros .rotulo { flex-shrink: 0; }
+    .chip { flex-shrink: 0; padding: 8px 13px; font-size: 12.5px; min-height: 38px; }
+    .filtros select { flex-shrink: 0; max-width: none; font-size: 14px; min-height: 38px; padding: 6px 12px; }
+    .contagem { margin-left: 0; width: 100%; font-size: 12px; margin-top: 8px; display: block; }
+    .dica-mobile-card { display: block; font-size: 12px; color: var(--mt); margin: -6px 0 12px; }
+
+    /* CONVERSÃO DE TABELAS PRINCIPAIS EM CARDS MOBILE SEM ROLAGEM LATERAL */
+    .tabela-wrapper {
+        border: 0;
+        background: transparent;
+        overflow: visible;
+    }
+    table.tabela-dinamica {
+        display: block;
+        width: 100%;
+        min-width: 0 !important;
+    }
+    table.tabela-dinamica > thead { display: none; }
+    table.tabela-dinamica > tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    table.tabela-dinamica > tbody > tr.linha {
+        display: flex;
+        flex-direction: column;
+        background: linear-gradient(175deg, #191d26, #111318);
+        border: 1px solid var(--bd);
+        border-left: 4px solid var(--or);
+        border-radius: 12px;
+        padding: 12px 14px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    }
+    table.tabela-dinamica > tbody > tr.linha[data-status="finalizada"] { border-left-color: var(--ok); }
+    table.tabela-dinamica > tbody > tr.linha[data-status="aguardando"] { border-left-color: #a855f7; }
+    table.tabela-dinamica > tbody > tr.linha > td {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        width: 100%;
+        max-width: none !important;
+        padding: 6px 0;
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+        font-size: 13.5px;
+        text-align: right;
+    }
+    table.tabela-dinamica > tbody > tr.linha > td:last-child {
+        border-bottom: 0;
+        padding-top: 10px;
+        padding-bottom: 2px;
+        justify-content: stretch;
+    }
+    table.tabela-dinamica > tbody > tr.linha > td[data-label]::before {
+        content: attr(data-label);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--mt);
+        letter-spacing: 0.4px;
+        text-align: left;
+        flex-shrink: 0;
+        padding-top: 2px;
+    }
+    table.tabela-dinamica > tbody > tr.linha > td:last-child::before { display: none; }
+    table.tabela-dinamica > tbody > tr.linha .acoes {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+    table.tabela-dinamica > tbody > tr.linha .acoes > form { display: flex; width: 100%; }
+    table.tabela-dinamica > tbody > tr.linha .acoes button,
+    table.tabela-dinamica > tbody > tr.linha .acoes .botao {
+        width: 100%;
+        min-height: 42px;
+        font-size: 12.5px;
+        padding: 8px 10px;
+    }
+    table.tabela-dinamica > tbody > tr.detalhe {
+        margin-top: -8px;
+        border-radius: 0 0 12px 12px;
+        overflow: hidden;
+    }
+    table.tabela-dinamica > tbody > tr.detalhe > td {
+        display: block;
+        width: 100%;
+        padding: 14px;
+        border-radius: 10px;
+        border: 1px solid var(--bd);
+        border-left: 4px solid var(--or);
+    }
+    table.tabela-dinamica > tbody > tr.sem-resultado > td,
+    table.tabela-dinamica > tbody > tr > td.vazio {
+        display: block;
+        width: 100%;
+    }
+    .evidencia-thumb { max-width: 100%; width: 100%; max-height: 240px; }
+    .select-status-sc { width: 100%; max-width: 190px; font-size: 13px; min-height: 38px; }
+
+    /* TABELAS SECUNDÁRIAS MANTÊM SCROLL SUAVE */
+    table:not(.tabela-dinamica) { min-width: 560px; }
+
+    /* MODAIS EM ESTILO BOTTOM-SHEET NO MOBILE */
+    .overlay, .overlay-alerta-os {
+        padding: 0;
+        align-items: flex-end;
+    }
+    .modal, .modal-alerta-os {
+        padding: 20px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+        border-radius: 18px 18px 0 0;
+        max-height: 92vh;
+        overflow-y: auto;
+        border-bottom: 0;
+    }
     .modal h3 { font-size: 17.5px; line-height: 1.3; }
-    .modal-acoes { flex-direction: column-reverse; }
-    .modal-acoes button, .modal-acoes .botao { width: 100%; }
+    .modal-acoes { flex-direction: column-reverse; gap: 8px; }
+    .modal-acoes button, .modal-acoes .botao { width: 100%; min-height: 46px; }
     .alerta-os-grade { grid-template-columns: 1fr; }
 
     .form-grid, .form-grid.tres, .checkbox-grid, .grid-duplo, .grid-triplo { grid-template-columns: 1fr; gap: 12px; }
     .campo.completo { grid-column: auto; }
-    .busca { min-width: 100%; }
-    .contagem { margin-left: 0; width: 100%; font-size: 12.5px; }
-    .toasts { left: 12px; right: 12px; top: 12px; max-width: none; }
-    .toast { font-size: 13px; line-height: 1.4; }
+    .toasts { left: 10px; right: 10px; top: 10px; max-width: none; }
+    .toast { font-size: 13.5px; line-height: 1.4; }
 }
 """
 
@@ -1669,7 +1860,7 @@ ovAlertaOS.innerHTML = `
     <div class="modal-alerta-os" role="dialog" aria-modal="true" aria-labelledby="alertaOSTitulo">
         <div class="alerta-os-topo">
             <span class="alerta-os-tag">🔔 NOVA O.S. REGISTRADA</span>
-            <button type="button" class="limpar" id="btnFecharAlertaOS" style="padding:6px 12px;font-size:12px">✕ Fechar</button>
+            <button type="button" class="limpar" id="btnFecharAlertaOS" style="padding:6px 12px;font-size:12px;min-height:36px">✕ Fechar</button>
         </div>
         <h3 id="alertaOSTitulo" style="margin:0 0 4px;font-size:20px;color:#fb923c">Ordem de Serviço #<span id="alertaOSNumero"></span></h3>
         <p class="muted" style="margin:0">Registrada em <strong style="color:#f3f4f6" id="alertaOSAbertura"></strong></p>
@@ -1834,22 +2025,31 @@ $$('textarea[data-max]').forEach(ta=>{
 function initTabelas(){
     $$('table.tabela-dinamica').forEach(tabela=>{
         const tbody=tabela.tBodies[0];if(!tbody)return;
+        const cabecalhos=$$('thead th',tabela).map(th=>th.textContent.trim());
         const linhas=$$('tr.linha',tbody),vazio=$('tr.sem-resultado',tbody),contador=$('#contador-'+tabela.id);
         const estado={q:'',f:{}};
         linhas.forEach(tr=>{
+            $$('td',tr).forEach((td,idx)=>{
+                if(!td.dataset.label && cabecalhos[idx]) td.dataset.label=cabecalhos[idx];
+            });
             tr._det=tr.nextElementSibling&&tr.nextElementSibling.classList.contains('detalhe')?tr.nextElementSibling:null;
             tr._txt=norm(tr.textContent+' '+(tr._det?tr._det.textContent:''));
         });
+        const exibirDetalhe = (det, aberto) => {
+            if (!det) return;
+            if (!aberto) { det.style.display = 'none'; return; }
+            det.style.display = window.innerWidth <= 860 ? 'block' : 'table-row';
+        };
         function aplicar(){
             let n=0;
             linhas.forEach(tr=>{
                 let ok=!estado.q||tr._txt.includes(estado.q);
                 Object.keys(estado.f).forEach(k=>{if(estado.f[k]&&tr.dataset[k]!==estado.f[k])ok=false});
                 tr.style.display=ok?'':'none';
-                if(tr._det)tr._det.style.display=ok&&tr._det.classList.contains('aberto')?'table-row':'none';
+                if(tr._det) exibirDetalhe(tr._det, ok && tr._det.classList.contains('aberto'));
                 if(ok)n++;
             });
-            if(vazio)vazio.style.display=n===0&&linhas.length?'table-row':'none';
+            if(vazio)vazio.style.display=n===0&&linhas.length?(window.innerWidth<=860?'block':'table-row'):'none';
             if(contador)contador.innerHTML='Exibindo <strong>'+n+'</strong> de '+linhas.length+' registros';
         }
         if(tabela.classList.contains('detalhavel')){
@@ -1859,7 +2059,7 @@ function initTabelas(){
                 tr.addEventListener('click',e=>{
                     if(e.target.closest('button,a,form,input,select'))return;
                     tr._det.classList.toggle('aberto');
-                    tr._det.style.display=tr._det.classList.contains('aberto')?'table-row':'none';
+                    exibirDetalhe(tr._det, tr._det.classList.contains('aberto'));
                 });
             });
         }
@@ -1886,6 +2086,7 @@ function initTabelas(){
                 aplicar();
             });
         });
+        window.addEventListener('resize', aplicar);
         aplicar();
         const wrapper=tabela.closest('.painel-secao')||document;
         const q=$('.q-busca',wrapper);
@@ -1931,43 +2132,42 @@ $$('form').forEach(f=>{
 const verSenha=$('#verSenha');
 if(verSenha){verSenha.addEventListener('click',()=>{const s=$('#senha');if(s)s.type=s.type==='password'?'text':'password'})}
 
+/* HELPER REUTILIZÁVEL PARA PRÉVIA DE IMAGEM */
+function vincularPreviewImagem(inputEl, boxEl, imgEl, nomeEl){
+    let urlAtual = '';
+    const limpar = () => {
+        if (inputEl) inputEl.value = '';
+        if (urlAtual) { URL.revokeObjectURL(urlAtual); urlAtual = ''; }
+        if (imgEl) imgEl.src = '';
+        if (nomeEl) nomeEl.textContent = '';
+        if (boxEl) boxEl.style.display = 'none';
+    };
+    if (inputEl) {
+        inputEl.addEventListener('change', () => {
+            if (urlAtual) { URL.revokeObjectURL(urlAtual); urlAtual = ''; }
+            const arq = inputEl.files && inputEl.files[0];
+            if (!arq) {
+                if (boxEl) boxEl.style.display = 'none';
+                return;
+            }
+            urlAtual = URL.createObjectURL(arq);
+            if (imgEl) imgEl.src = urlAtual;
+            if (nomeEl) nomeEl.textContent = arq.name;
+            if (boxEl) boxEl.style.display = 'block';
+        });
+    }
+    return limpar;
+}
+
 const modalFinalizar = $('#modalFinalizar');
 if(modalFinalizar){
     const formFinalizar = $('#formFinalizar');
-    const inputEvidencia = $('#evidenciaFotoInput');
-    const previewBox = $('#previewEvidenciaBox');
-    const previewImg = $('#previewEvidenciaImg');
-    const previewNome = $('#previewEvidenciaNome');
-    let previewUrlAtual = '';
-
-    const limparPreviewEvidencia = () => {
-        if (inputEvidencia) inputEvidencia.value = '';
-        if (previewUrlAtual) {
-            URL.revokeObjectURL(previewUrlAtual);
-            previewUrlAtual = '';
-        }
-        if (previewImg) previewImg.src = '';
-        if (previewNome) previewNome.textContent = '';
-        if (previewBox) previewBox.style.display = 'none';
-    };
-
-    if (inputEvidencia) {
-        inputEvidencia.addEventListener('change', () => {
-            if (previewUrlAtual) {
-                URL.revokeObjectURL(previewUrlAtual);
-                previewUrlAtual = '';
-            }
-            const arq = inputEvidencia.files && inputEvidencia.files[0];
-            if (!arq) {
-                if (previewBox) previewBox.style.display = 'none';
-                return;
-            }
-            previewUrlAtual = URL.createObjectURL(arq);
-            if (previewImg) previewImg.src = previewUrlAtual;
-            if (previewNome) previewNome.textContent = arq.name;
-            if (previewBox) previewBox.style.display = 'block';
-        });
-    }
+    const limparPreviewEvidencia = vincularPreviewImagem(
+        $('#evidenciaFotoInput'),
+        $('#previewEvidenciaBox'),
+        $('#previewEvidenciaImg'),
+        $('#previewEvidenciaNome')
+    );
 
     $$('.btn-abrir-finalizar').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1988,6 +2188,56 @@ if(modalFinalizar){
     };
     $$('[data-fechar-fin]', modalFinalizar).forEach(b => b.addEventListener('click', fecharFin));
     modalFinalizar.addEventListener('mousedown', e => { if(e.target === modalFinalizar) fecharFin(); });
+}
+
+/* MODAL DE GERENCIAR EVIDÊNCIA EM O.S. JÁ FINALIZADA */
+const modalEvidenciaOS = $('#modalEvidenciaOS');
+if(modalEvidenciaOS){
+    const formEvidenciaOS = $('#formEvidenciaOS');
+    const formRemoverEvidenciaOS = $('#formRemoverEvidenciaOS');
+    const boxAtual = $('#evidenciaAtualModalBox');
+    const imgAtual = $('#evidenciaAtualModalImg');
+    const nomeAtual = $('#evidenciaAtualModalNome');
+    const limparPreviewModalEv = vincularPreviewImagem(
+        $('#evidenciaModalInput'),
+        $('#previewModalEvBox'),
+        $('#previewModalEvImg'),
+        $('#previewModalEvNome')
+    );
+
+    $$('.btn-gerenciar-evidencia').forEach(btn => {
+        btn.addEventListener('click', () => {
+            formEvidenciaOS.action = btn.dataset.url;
+            $('#osNumeroEvidencia').textContent = btn.dataset.numero || '';
+            limparPreviewModalEv();
+
+            const temImg = btn.dataset.imgUrl && btn.dataset.imgUrl.trim() !== '';
+            if (temImg) {
+                imgAtual.src = btn.dataset.imgUrl;
+                nomeAtual.textContent = btn.dataset.imgNome || 'Evidência anexada';
+                boxAtual.style.display = 'block';
+                if (formRemoverEvidenciaOS && btn.dataset.removeUrl) {
+                    formRemoverEvidenciaOS.action = btn.dataset.removeUrl;
+                    formRemoverEvidenciaOS.style.display = 'inline-flex';
+                }
+            } else {
+                imgAtual.src = '';
+                nomeAtual.textContent = '';
+                boxAtual.style.display = 'none';
+                if (formRemoverEvidenciaOS) {
+                    formRemoverEvidenciaOS.style.display = 'none';
+                }
+            }
+            modalEvidenciaOS.classList.add('aberto');
+        });
+    });
+
+    const fecharModalEv = () => {
+        limparPreviewModalEv();
+        modalEvidenciaOS.classList.remove('aberto');
+    };
+    $$('[data-fechar-evidencia]', modalEvidenciaOS).forEach(b => b.addEventListener('click', fecharModalEv));
+    modalEvidenciaOS.addEventListener('mousedown', e => { if(e.target === modalEvidenciaOS) fecharModalEv(); });
 }
 
 const modalPausar = $('#modalPausar');
@@ -2089,7 +2339,7 @@ if(modalEditarSpare){
 # TEMPLATES HTML
 # ==============================================================================
 HTML_LOBBY = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOBBY — MANUTENÇÃO JAMAICA</title><style>{{css|safe}}</style></head><body>
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOBBY — MANUTENÇÃO JAMAICA</title><style>{{css|safe}}</style></head><body>
 <div class="lobby-wrap">
     <div class="lobby-card">
         <div class="lobby-logo">J</div>
@@ -2115,11 +2365,17 @@ HTML_LOBBY = r"""
     </div>
     <footer class="rodape">Central de Manutenção JAMAICA — Lobby de Acesso</footer>
 </div>
+<nav class="mobile-bottom-nav" aria-label="Navegação Rápida Mobile">
+    <a href="{{url_for('lobby')}}" class="ativo"><span class="nav-ico">🏠</span>Lobby</a>
+    <a href="{{url_for('dashboard')}}"><span class="nav-ico">📋</span>O.S.</a>
+    <a href="{{url_for('central_gestao')}}"><span class="nav-ico">🔐</span>Gestão</a>
+    <a href="{{url_for('dashboard')}}#cardNovaOS"><span class="nav-ico">➕</span>Nova O.S.</a>
+</nav>
 <script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
 """
 
 HTML_OS = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>CENTRAL O.S. — JAMAICA</title><style>{{css|safe}}</style></head><body><div class="container">
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>CENTRAL O.S. — JAMAICA</title><style>{{css|safe}}</style></head><body><div class="container">
 <header class="cabecalho">
     <div class="cabecalho-principal">
         <div class="cabecalho-titulo">
@@ -2132,7 +2388,7 @@ HTML_OS = r"""
         <div class="nav-abas">
             <a href="{{url_for('lobby')}}" class="aba">🏠 Lobby</a>
             <a href="{{url_for('dashboard')}}" class="aba ativa">📋 Ordens de Serviço</a>
-            <a href="{{url_for('central_gestao')}}" class="aba" style="border-color:var(--or2);color:#fed7aa">🔐 Central de Gestão (Estoque, PCM, Compras & Indicadores)</a>
+            <a href="{{url_for('central_gestao')}}" class="aba" style="border-color:var(--or2);color:#fed7aa">🔐 Central de Gestão</a>
             <button type="button" id="btnInstalarApp" class="aba" style="display:inline-flex;background:var(--btn);border-color:var(--or);color:#fff">📲 Instalar App</button>
         </div>
     </div>
@@ -2141,12 +2397,12 @@ HTML_OS = r"""
 
 <section class="resumo">
     <div class="resumo-card" data-atalho='[data-filtro="status"][data-valor=""]'><span class="icone">📋</span><span>Total de O.S.</span><strong>{{total}}</strong><div class="progresso"><span style="width:{{pct_final}}%"></span></div><small>{{pct_final}}% concluídas</small></div>
-    <div class="resumo-card" data-atalho='[data-filtro="status"][data-valor="aberta"]'><span class="icone">🟡</span><span>O.S. Abertas</span><strong style="color:#fde047">{{abertas}}</strong><small>Clique para filtrar</small></div>
+    <div class="resumo-card" data-atalho='[data-filtro="status"][data-valor="aberta"]'><span class="icone">🟡</span><span>O.S. Abertas</span><strong style="color:#fde047">{{abertas}}</strong><small>Toque para filtrar</small></div>
     <div class="resumo-card" data-atalho='[data-filtro="status"][data-valor="aguardando"]'><span class="icone">⏳</span><span>Aguardando Peça</span><strong style="color:#d8b4fe">{{aguardando}}</strong><small>Pausadas por suprimentos</small></div>
     <div class="resumo-card" data-atalho='[data-filtro="status"][data-valor="finalizada"]'><span class="icone">✅</span><span>O.S. Finalizadas</span><strong style="color:#4ade80">{{finalizadas}}</strong><small>Próxima O.S.: <b>{{proxima}}</b></small></div>
 </section>
 
-<details class="card" open><summary>➕ Abrir Nova Ordem de Serviço</summary><div class="conteudo"><form id="formCriarOS" action="{{url_for('criar')}}" method="POST"><div class="form-grid">
+<details class="card" id="cardNovaOS" open><summary>➕ Abrir Nova Ordem de Serviço</summary><div class="conteudo"><form id="formCriarOS" action="{{url_for('criar')}}" method="POST"><div class="form-grid">
     <div class="campo"><label>Número da O.S.</label><input value="{{proxima}}" disabled></div>
     <div class="campo"><label>Solicitante *</label><input name="solicitante" maxlength="100" required placeholder="Nome do solicitante"></div>
     <div class="campo"><label>Máquina / Equipamento *</label><input name="setor" list="listaMaquinas" maxlength="100" value="{{prefill_setor}}" placeholder="Ex: Extrusora Troester 90/16">
@@ -2163,7 +2419,7 @@ HTML_OS = r"""
     </div>
     <div class="campo"><label>Setor</label><input name="responsavel" maxlength="100" placeholder="Local aonde há o problema"></div>
     <div class="campo completo"><label>Descrição Detalhada</label><textarea name="descricao" data-max="1000" placeholder="Descreva os detalhes técnicos do serviço solicitado..."></textarea></div>
-    <div class="campo completo"><button class="salvar" type="submit" onclick="window.tocarSomNotificacaoOS && window.tocarSomNotificacaoOS()">+ Registrar Ordem de Serviço</button></div>
+    <div class="campo completo"><button class="salvar" style="width:100%" type="submit" onclick="window.tocarSomNotificacaoOS && window.tocarSomNotificacaoOS()">+ Registrar Ordem de Serviço</button></div>
 </div></form></div></details>
 
 <section class="card" id="secao-tabela">
@@ -2178,7 +2434,7 @@ HTML_OS = r"""
         <span class="rotulo">Status</span>
         <button type="button" class="chip ativo" data-filtro="status" data-valor="">Todas</button>
         <button type="button" class="chip" data-filtro="status" data-valor="aberta">Abertas</button>
-        <button type="button" class="chip" data-filtro="status" data-valor="aguardando">Aguardando Peça</button>
+        <button type="button" class="chip" data-filtro="status" data-valor="aguardando">Aguard. Peça</button>
         <button type="button" class="chip" data-filtro="status" data-valor="finalizada">Finalizadas</button>
         <span class="rotulo">Prioridade</span>
         <select data-filtro="prioridade">
@@ -2194,6 +2450,7 @@ HTML_OS = r"""
 
 <section class="card">
     <h2>Ordens de Serviço Registradas</h2>
+    <p class="dica-mobile-card">💡 Toque em qualquer cartão de O.S. para ver descrição, laudo técnico e fotos.</p>
     <div class="tabela-wrapper">
         <table id="tabelaOS" class="tabela-dinamica detalhavel">
             <thead>
@@ -2216,30 +2473,38 @@ HTML_OS = r"""
             {% for os in ordens %}
                 {% set st_code = 'finalizada' if os.status=='Finalizada' else ('aguardando' if os.status=='Aguardando Peça' else 'aberta') %}
                 <tr class="linha" data-status="{{st_code}}" data-prioridade="{{os.prioridade|lower|replace('í','i')|replace('é','e')}}">
-                    <td><strong>{{os.numero_os}}</strong></td>
-                    <td>{{os.solicitante}}</td>
-                    <td style="max-width:190px">{{os.setor or '-'}}</td>
-                    <td style="max-width:240px">{{os.titulo or '-'}}</td>
-                    <td><span class="prioridade prioridade-{{os.prioridade|lower|replace('í','i')|replace('é','e')}}">{{os.prioridade}}</span></td>
-                    <td>{{os.responsavel or '-'}}</td>
-                    <td>{% if os.tipo_manutencao %}<span class="tipo-badge tipo-{{os.tipo_manutencao|lower}}">{{os.tipo_manutencao}}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
-                    <td>
+                    <td data-label="OS"><strong>{{os.numero_os}}{% if os.evidencia_imagem %} 📷{% endif %}</strong></td>
+                    <td data-label="Solicitante">{{os.solicitante}}</td>
+                    <td data-label="Máquina / Setor" style="max-width:190px">{{os.setor or '-'}}</td>
+                    <td data-label="Causa" style="max-width:240px">{{os.titulo or '-'}}</td>
+                    <td data-label="Prioridade"><span class="prioridade prioridade-{{os.prioridade|lower|replace('í','i')|replace('é','e')}}">{{os.prioridade}}</span></td>
+                    <td data-label="Responsável">{{os.responsavel or '-'}}</td>
+                    <td data-label="Tipo">{% if os.tipo_manutencao %}<span class="tipo-badge tipo-{{os.tipo_manutencao|lower}}">{{os.tipo_manutencao}}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
+                    <td data-label="Status">
                         {% if os.status=='Finalizada' %}<span class="status finalizada">Finalizada</span>
                         {% elif os.status=='Aguardando Peça' %}<span class="status aguardando-peca">⏳ Aguard. Peça</span>
                         {% else %}<span class="status aberta">Aberta</span>{% endif %}
                     </td>
-                    <td>{{os.abertura}}</td>
-                    <td>{{os.finalizacao or '-'}}</td>
-                    <td>{{os.tempo_total or '-'}}</td>
-                    <td>
+                    <td data-label="Abertura">{{os.abertura}}</td>
+                    <td data-label="Finalização">{{os.finalizacao or '-'}}</td>
+                    <td data-label="Lead Time">{{os.tempo_total or '-'}}</td>
+                    <td data-label="Ações">
                         <div class="acoes">
                             {% if os.status!='Finalizada' %}
                             <button type="button" class="finalizar btn-abrir-finalizar" data-url="{{url_for('finalizar',id=os.id)}}" data-numero="{{os.numero_os}}">✔ Finalizar</button>
-                            <button type="button" class="pausar btn-abrir-pausar" data-url="{{url_for('pausar_os',id=os.id)}}" data-numero="{{os.numero_os}}" data-motivo="{{os.motivo_pausa}}" title="Pausar por falta de peça ou retomar">⏳</button>
+                            <button type="button" class="pausar btn-abrir-pausar" data-url="{{url_for('pausar_os',id=os.id)}}" data-numero="{{os.numero_os}}" data-motivo="{{os.motivo_pausa}}" title="Pausar por falta de peça ou retomar">⏳ Espera</button>
+                            {% else %}
+                            <button type="button" class="evidencia-btn btn-gerenciar-evidencia"
+                                data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
+                                data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
+                                data-numero="{{os.numero_os}}"
+                                data-img-url="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem) if os.evidencia_imagem else ''}}"
+                                data-img-nome="{{os.evidencia_nome or os.evidencia_imagem}}"
+                                title="Anexar ou alterar foto de evidência">📷 {{ 'Trocar Foto' if os.evidencia_imagem else '+ Evidência' }}</button>
                             {% endif %}
-                            <a href="{{url_for('imprimir_os',id=os.id)}}" target="_blank" class="botao imprimir" title="Imprimir O.S. em A4">🖨️</a>
+                            <a href="{{url_for('imprimir_os',id=os.id)}}" target="_blank" class="botao imprimir" title="Imprimir O.S. em A4">🖨️ A4</a>
                             <form action="{{url_for('excluir',id=os.id)}}" method="POST" data-perigo="1" data-confirm="Tem certeza que deseja excluir permanentemente a O.S. {{os.numero_os}}?" data-confirm-btn="Excluir">
-                                <button class="excluir" title="Excluir O.S.">✕</button>
+                                <button class="excluir" title="Excluir O.S.">✕ Excluir</button>
                             </form>
                         </div>
                     </td>
@@ -2259,14 +2524,34 @@ HTML_OS = r"""
                         {% endif %}
                         {% if os.evidencia_imagem %}
                         <div class="evidencia-box">
-                            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
                                 <strong style="color:#60a5fa">📷 Evidência do Trabalho Feito:</strong>
-                                <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer" class="botao imprimir" style="padding:5px 10px;font-size:11.5px">🔍 Abrir Foto Completa</a>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                    <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer" class="botao imprimir" style="padding:6px 10px;font-size:12px">🔍 Foto Completa</a>
+                                    {% if os.status=='Finalizada' %}
+                                    <button type="button" class="evidencia-btn btn-gerenciar-evidencia" style="padding:6px 10px;font-size:12px"
+                                        data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
+                                        data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
+                                        data-numero="{{os.numero_os}}"
+                                        data-img-url="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}"
+                                        data-img-nome="{{os.evidencia_nome or os.evidencia_imagem}}">🔄 Trocar / Remover</button>
+                                    {% endif %}
+                                </div>
                             </div>
                             <span class="muted" style="display:block;margin-top:4px">{{os.evidencia_nome or os.evidencia_imagem}}</span>
                             <a href="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" target="_blank" rel="noopener noreferrer">
                                 <img src="{{url_for('ver_evidencia_os', filename=os.evidencia_imagem)}}" alt="Evidência da O.S. {{os.numero_os}}" class="evidencia-thumb">
                             </a>
+                        </div>
+                        {% elif os.status=='Finalizada' %}
+                        <div class="evidencia-box" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                            <span class="muted">Nenhuma foto de evidência anexada a esta O.S. finalizada.</span>
+                            <button type="button" class="evidencia-btn btn-gerenciar-evidencia" style="padding:7px 12px;font-size:12px"
+                                data-url="{{url_for('atualizar_evidencia_os', id=os.id)}}"
+                                data-remove-url="{{url_for('remover_evidencia_rota', id=os.id)}}"
+                                data-numero="{{os.numero_os}}"
+                                data-img-url=""
+                                data-img-nome="">📷 Adicionar Foto de Evidência</button>
                         </div>
                         {% endif %}
                     </td>
@@ -2280,6 +2565,13 @@ HTML_OS = r"""
     </div>
 </section>
 <footer class="rodape">Central de Manutenção JAMAICA — Gestão Industrial</footer></div>
+
+<nav class="mobile-bottom-nav" aria-label="Navegação Rápida Mobile">
+    <a href="{{url_for('lobby')}}"><span class="nav-ico">🏠</span>Lobby</a>
+    <a href="{{url_for('dashboard')}}" class="ativo"><span class="nav-ico">📋</span>O.S.</a>
+    <a href="{{url_for('central_gestao')}}"><span class="nav-ico">🔐</span>Gestão</a>
+    <a href="#cardNovaOS" onclick="document.getElementById('cardNovaOS').open=true"><span class="nav-ico">➕</span>Nova O.S.</a>
+</nav>
 
 <div class="overlay" id="modalFinalizar">
     <div class="modal">
@@ -2314,7 +2606,7 @@ HTML_OS = r"""
             </div>
             <div class="campo">
                 <label>📷 Evidência do Trabalho Feito (Foto / Câmera — PNG, JPG, WEBP até 6 MB)</label>
-                <input type="file" name="evidencia_foto" id="evidenciaFotoInput" accept="image/png,image/jpeg,image/webp">
+                <input type="file" name="evidencia_foto" id="evidenciaFotoInput" accept="image/png,image/jpeg,image/webp" capture="environment">
                 <div class="preview-evidencia-box" id="previewEvidenciaBox">
                     <span class="muted" id="previewEvidenciaNome"></span>
                     <img id="previewEvidenciaImg" src="" alt="Prévia da evidência">
@@ -2341,6 +2633,39 @@ HTML_OS = r"""
                 <button type="button" class="limpar" data-fechar-fin>Cancelar</button>
                 <button type="submit" class="salvar">Confirmar e Finalizar</button>
             </div>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL PARA ANEXAR / TROCAR / REMOVER EVIDÊNCIA EM O.S. FINALIZADA -->
+<div class="overlay" id="modalEvidenciaOS">
+    <div class="modal">
+        <h3>📷 Evidência Fotográfica — O.S. <span id="osNumeroEvidencia"></span></h3>
+        <p class="muted">Anexe ou atualize a foto comprobatória do serviço concluído (PNG, JPG ou WEBP até 6 MB).</p>
+
+        <div class="evidencia-box" id="evidenciaAtualModalBox" style="display:none;margin-bottom:14px">
+            <strong style="color:#4ade80;font-size:12.5px">Evidência Atual Registrada:</strong>
+            <span class="muted" id="evidenciaAtualModalNome" style="display:block;margin-top:3px"></span>
+            <img id="evidenciaAtualModalImg" src="" alt="Evidência atual" class="evidencia-thumb">
+        </div>
+
+        <form id="formEvidenciaOS" method="POST" enctype="multipart/form-data">
+            <div class="campo">
+                <label>Selecionar ou Tirar Foto *</label>
+                <input type="file" name="evidencia_foto" id="evidenciaModalInput" accept="image/png,image/jpeg,image/webp" capture="environment" required>
+                <div class="preview-evidencia-box" id="previewModalEvBox">
+                    <span class="muted" id="previewModalEvNome"></span>
+                    <img id="previewModalEvImg" src="" alt="Prévia da nova evidência">
+                </div>
+            </div>
+            <div class="modal-acoes">
+                <button type="button" class="limpar" data-fechar-evidencia>Cancelar</button>
+                <button type="submit" class="salvar">💾 Salvar Evidência</button>
+            </div>
+        </form>
+
+        <form id="formRemoverEvidenciaOS" method="POST" style="display:none;margin-top:10px;width:100%" data-perigo="1" data-confirm="Deseja remover permanentemente a foto de evidência desta O.S.?" data-confirm-btn="Remover Foto">
+            <button type="submit" class="excluir" style="width:100%">🗑️ Remover Evidência Atual</button>
         </form>
     </div>
 </div>
@@ -2374,11 +2699,11 @@ HTML_OS = r"""
 """
 
 HTML_LOGIN_SISTEMA = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a><a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>LOGIN — CENTRAL GESTÃO JAMAICA</title><style>{{css|safe}}</style></head><body class="login"><div class="container-login"><div class="cabecalho" style="justify-content:center;text-align:center"><div class="cabecalho-principal"><h1>🔒 ÁREA RESTRITA</h1><p>Digite as credenciais para acessar a Central de Gestão</p></div></div><div class="card-login"><form method="POST"><div class="campo"><label>Usuário</label><input name="usuario" required autofocus autocomplete="username" placeholder="Digite o usuário"></div><div class="campo"><label>Senha</label><div class="senha-wrap"><input type="password" id="senha" name="senha" required autocomplete="current-password" placeholder="Digite a senha"><button type="button" class="olho" id="verSenha" title="Mostrar/Ocultar senha">👁️</button></div></div><button class="salvar" type="submit">Entrar na Central</button><a href="{{url_for('dashboard')}}" class="botao limpar">Ir para Ordens de Serviço</a><a href="{{url_for('lobby')}}" class="botao limpar">Voltar ao Lobby</a></form></div></div><script>window.__FLASH__={{flash_msgs|tojson}};window.__ULTIMO_OS_ID__={{ultimo_os_id|default(0)}};</script><script>{{js|safe}}</script></body></html>
 """
 
 HTML_CENTRAL_GESTAO = r"""
-<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>CENTRAL DE GESTÃO — JAMAICA</title><style>{{css|safe}}</style>
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/svg+xml" href="{{favicon}}">{{pwa_head|safe}}<title>CENTRAL DE GESTÃO — JAMAICA</title><style>{{css|safe}}</style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head><body><div class="container">
 <header class="cabecalho">
@@ -2393,19 +2718,19 @@ HTML_CENTRAL_GESTAO = r"""
         <div class="nav-abas">
             <a href="{{url_for('lobby')}}" class="aba">🏠 Lobby</a>
             <a href="{{url_for('dashboard')}}" class="aba">📋 Ordens de Serviço</a>
-            <a href="{{url_for('central_gestao')}}" class="aba ativa">🔐 Central de Gestão Unificada</a>
+            <a href="{{url_for('central_gestao')}}" class="aba ativa">🔐 Central de Gestão</a>
             <button type="button" id="btnInstalarApp" class="aba" style="display:inline-flex;background:var(--btn);border-color:var(--or);color:#fff">📲 Instalar App</button>
         </div>
     </div>
-    <div class="cabecalho-lado"><span class="relogio" id="relogio"></span><a href="{{url_for('logout_sistema')}}" class="botao-sair">Sair do Sistema</a></div>
+    <div class="cabecalho-lado"><span class="relogio" id="relogio"></span><a href="{{url_for('logout_sistema')}}" class="botao-sair">Sair</a></div>
 </header>
 
 <div class="sub-abas-nav">
-    <button type="button" class="sub-aba-btn ativa" data-alvo="secao-estoque">📦 Controle de Estoque</button>
-    <button type="button" class="sub-aba-btn" data-alvo="secao-spare">🔧 Spare Parts & QR Code</button>
-    <button type="button" class="sub-aba-btn" data-alvo="secao-pcm">📅 PCM (Preventivas)</button>
-    <button type="button" class="sub-aba-btn" data-alvo="secao-compras">🛒 Solicit. Compras (S.C.)</button>
-    <button type="button" class="sub-aba-btn" data-alvo="secao-indicadores">📊 Indicadores, MTTR & Equipe</button>
+    <button type="button" class="sub-aba-btn ativa" data-alvo="secao-estoque">📦 Estoque</button>
+    <button type="button" class="sub-aba-btn" data-alvo="secao-spare">🔧 Spare Parts & QR</button>
+    <button type="button" class="sub-aba-btn" data-alvo="secao-pcm">📅 PCM</button>
+    <button type="button" class="sub-aba-btn" data-alvo="secao-compras">🛒 Compras (S.C.)</button>
+    <button type="button" class="sub-aba-btn" data-alvo="secao-indicadores">📊 Indicadores & Equipe</button>
     <button type="button" class="sub-aba-btn" data-alvo="secao-governanca">🛡️ Backup & Auditoria</button>
 </div>
 
@@ -2414,7 +2739,7 @@ HTML_CENTRAL_GESTAO = r"""
     <section class="resumo" style="margin-bottom:22px">
         <div class="resumo-card"><span class="icone">🔩</span><span>SKUs Cadastrados</span><strong>{{total_pecas}}</strong></div>
         <div class="resumo-card"><span class="icone">📦</span><span>Volume Total</span><strong>{{total_quantidade}}</strong></div>
-        <div class="resumo-card" data-atalho='[data-filtro="baixo"][data-valor="1"]'><span class="icone">🚨</span><span>Estoque Baixo</span><strong style="color:#f87171">{{itens_baixo}}</strong><small>Clique para filtrar críticos</small></div>
+        <div class="resumo-card" data-atalho='[data-filtro="baixo"][data-valor="1"]'><span class="icone">🚨</span><span>Estoque Baixo</span><strong style="color:#f87171">{{itens_baixo}}</strong><small>Toque para filtrar</small></div>
         <div class="resumo-card"><span class="icone">🔁</span><span>Movimentações</span><strong>{{total_movimentacoes}}</strong></div>
     </section>
 
@@ -2425,7 +2750,7 @@ HTML_CENTRAL_GESTAO = r"""
         <div class="campo"><label>Localização Física</label><input name="localizacao" placeholder="Ex: Corredor A / Prateleira B-3"></div>
         <div class="campo"><label>Quantidade Inicial *</label><input type="number" name="quantidade" min="0" value="1" required></div>
         <div class="campo"><label>Estoque Mínimo *</label><input type="number" name="estoque_minimo" min="1" value="2" required></div>
-        <div class="campo completo"><button class="salvar" type="submit">+ Cadastrar Peça</button></div>
+        <div class="campo completo"><button class="salvar" style="width:100%" type="submit">+ Cadastrar Peça</button></div>
     </div></form></div></details>
 
     <section class="card">
@@ -2453,22 +2778,22 @@ HTML_CENTRAL_GESTAO = r"""
                     {% set baixo=p.quantidade<=p.estoque_minimo %}
                     {% set pct=[((p.quantidade/((p.estoque_minimo*3) or 1))*100)|round|int,100]|min %}
                     <tr class="linha" data-baixo="{{'1' if baixo else ''}}">
-                        <td><strong>{{p.codigo}}</strong></td>
-                        <td>{{p.nome}}</td>
-                        <td>{{p.categoria or '-'}}</td>
-                        <td>{{p.localizacao or '-'}}</td>
-                        <td class="nivel"><strong>{{p.quantidade}}</strong><div class="barra {{'baixo' if baixo else ''}}"><span style="width:{{pct}}%"></span></div></td>
-                        <td>{{p.estoque_minimo}}</td>
-                        <td>{% if baixo %}<span class="status estoque-baixo">Baixo Estoque</span>{% else %}<span class="status estoque-ok">Normal</span>{% endif %}</td>
-                        <td>{{p.ultima_atualizacao}}</td>
-                        <td>
+                        <td data-label="Código"><strong>{{p.codigo}}</strong></td>
+                        <td data-label="Peça">{{p.nome}}</td>
+                        <td data-label="Categoria">{{p.categoria or '-'}}</td>
+                        <td data-label="Localização">{{p.localizacao or '-'}}</td>
+                        <td data-label="Saldo" class="nivel"><strong>{{p.quantidade}}</strong><div class="barra {{'baixo' if baixo else ''}}"><span style="width:{{pct}}%"></span></div></td>
+                        <td data-label="Mínimo">{{p.estoque_minimo}}</td>
+                        <td data-label="Status">{% if baixo %}<span class="status estoque-baixo">Baixo Estoque</span>{% else %}<span class="status estoque-ok">Normal</span>{% endif %}</td>
+                        <td data-label="Atualização">{{p.ultima_atualizacao}}</td>
+                        <td data-label="Ações">
                             <div class="acoes">
                                 <button type="button" class="movimentar" data-url="{{url_for('movimentar_estoque',id=p.id)}}" data-nome="{{p.nome}}" data-codigo="{{p.codigo}}" data-qtd="{{p.quantidade}}" data-min="{{p.estoque_minimo}}">⇄ Movimentar</button>
                                 {% if baixo %}
                                 <a href="{{url_for('central_gestao', repor_codigo=p.codigo, repor_nome=p.nome, repor_qtd=(p.estoque_minimo*2 - p.quantidade) if (p.estoque_minimo*2 - p.quantidade) > 0 else p.estoque_minimo, tab='compras')}}" class="botao imprimir" title="Gerar S.C. de Reposição">🛒 Pedir S.C.</a>
                                 {% endif %}
-                                <button type="button" class="editar-peca-btn editar-peca" data-url="{{url_for('editar_peca',id=p.id)}}" data-codigo="{{p.codigo}}" data-nome="{{p.nome}}" data-categoria="{{p.categoria}}" data-localizacao="{{p.localizacao}}" data-estoque-minimo="{{p.estoque_minimo}}">✏️</button>
-                                <form action="{{url_for('excluir_peca',id=p.id)}}" method="POST" data-perigo="1" data-confirm="Excluir peça {{p.nome}}?" data-confirm-btn="Excluir"><button class="excluir">✕</button></form>
+                                <button type="button" class="editar-peca-btn editar-peca" data-url="{{url_for('editar_peca',id=p.id)}}" data-codigo="{{p.codigo}}" data-nome="{{p.nome}}" data-categoria="{{p.categoria}}" data-localizacao="{{p.localizacao}}" data-estoque-minimo="{{p.estoque_minimo}}">✏️ Editar</button>
+                                <form action="{{url_for('excluir_peca',id=p.id)}}" method="POST" data-perigo="1" data-confirm="Excluir peça {{p.nome}}?" data-confirm-btn="Excluir"><button class="excluir">✕ Excluir</button></form>
                             </div>
                         </td>
                     </tr>
@@ -2513,7 +2838,7 @@ HTML_CENTRAL_GESTAO = r"""
         <div class="campo"><label>Modelo / Fabricante *</label><input name="modelo" required maxlength="100" placeholder="Ex: Alawik 40L"></div>
         <div class="campo"><label>Setor</label><input name="setor" maxlength="100" placeholder="Ex: Massa"></div>
         <div class="campo completo"><label>Observações / Peças Críticas Recomendadas</label><input name="pecas_necessarias" placeholder="Ex: Kit vedação, rolamentos..."></div>
-        <div class="campo completo"><button class="salvar" type="submit">+ Cadastrar Equipamento</button></div>
+        <div class="campo completo"><button class="salvar" style="width:100%" type="submit">+ Cadastrar Equipamento</button></div>
     </div></form></div></details>
 
     <section class="card">
@@ -2525,29 +2850,30 @@ HTML_CENTRAL_GESTAO = r"""
 
     <section class="card">
     <h2>Relação de Máquinas e Spare Parts</h2>
+    <p class="dica-mobile-card">💡 Toque no cartão da máquina para expandir as peças mapeadas.</p>
     <div class="tabela-wrapper">
     <table id="tabelaSpare" class="tabela-dinamica detalhavel">
     <thead><tr><th data-tipo="texto">Máquina</th><th data-tipo="texto">Modelo</th><th data-tipo="texto">Setor</th><th>Notas</th><th>Peças Mapeadas</th><th>Ações</th></tr></thead>
     <tbody>
     {% for m in maquinas %}
     <tr class="linha">
-        <td><strong>{{m.maquina}}</strong></td>
-        <td>{{m.modelo}}</td>
-        <td>{{m.setor or '-'}}</td>
-        <td>{{m.pecas_necessarias or '-'}}</td>
-        <td><span class="status estoque-ok">{{m.pecas|length}} item(ns)</span></td>
-        <td>
+        <td data-label="Máquina"><strong>{{m.maquina}}</strong></td>
+        <td data-label="Modelo">{{m.modelo}}</td>
+        <td data-label="Setor">{{m.setor or '-'}}</td>
+        <td data-label="Notas">{{m.pecas_necessarias or '-'}}</td>
+        <td data-label="Peças"><span class="status estoque-ok">{{m.pecas|length}} item(ns)</span></td>
+        <td data-label="Ações">
             <div class="acoes">
-                <a href="{{url_for('dashboard', abrir_maquina=m.maquina)}}" class="botao limpar" title="Abrir O.S.">+ O.S.</a>
+                <a href="{{url_for('dashboard', abrir_maquina=m.maquina)}}" class="botao limpar" title="Abrir O.S.">+ Abrir O.S.</a>
                 <button type="button" class="editar-peca btn-editar-spare"
                     data-url="{{url_for('editar_maquina_spare', id=m.id)}}"
                     data-maquina="{{m.maquina}}"
                     data-modelo="{{m.modelo}}"
                     data-setor="{{m.setor}}"
                     data-notas="{{m.pecas_necessarias}}"
-                    title="Editar Máquina e Notas">✏️</button>
+                    title="Editar Máquina e Notas">✏️ Editar</button>
                 <form action="{{url_for('excluir_maquina_spare', id=m.id)}}" method="POST" data-perigo="1" data-confirm="Excluir equipamento {{m.maquina}}?" data-confirm-btn="Excluir">
-                    <button class="excluir">Excluir</button>
+                    <button class="excluir">✕ Excluir</button>
                 </form>
             </div>
         </td>
@@ -2557,7 +2883,8 @@ HTML_CENTRAL_GESTAO = r"""
             <div style="padding:6px 0">
                 <h4 style="margin:0 0 10px;color:var(--or2)">⚙️ Lista Técnica de Reposição</h4>
                 {% if m.pecas %}
-                <table style="margin-bottom:14px;background:#14171f;min-width:620px">
+                <div class="tabela-wrapper" style="overflow-x:auto;margin-bottom:14px">
+                <table style="background:#14171f;min-width:620px">
                     <thead><tr><th>Componente / Peça</th><th>Código</th><th>Qtd</th><th>Saldo Estoque</th><th>Obs</th><th>Ação</th></tr></thead>
                     <tbody>
                     {% for p in m.pecas %}
@@ -2581,6 +2908,7 @@ HTML_CENTRAL_GESTAO = r"""
                     {% endfor %}
                     </tbody>
                 </table>
+                </div>
                 {% else %}
                 <p class="muted" style="margin-bottom:12px">Nenhuma peça vinculada.</p>
                 {% endif %}
@@ -2592,7 +2920,7 @@ HTML_CENTRAL_GESTAO = r"""
                             <div class="campo"><label>Código / SKU</label><input name="codigo_peca" placeholder="Ex: RET-01" style="text-transform:uppercase"></div>
                             <div class="campo"><label>Qtd</label><input type="number" name="quantidade" value="1" min="1"></div>
                             <div class="campo completo"><label>Observação</label><input name="observacao" placeholder="Aplicação..."></div>
-                            <div class="campo completo"><button class="salvar" type="submit">+ Salvar Peça</button></div>
+                            <div class="campo completo"><button class="salvar" style="width:100%" type="submit">+ Salvar Peça</button></div>
                         </div>
                     </form>
                 </details>
@@ -2637,7 +2965,7 @@ HTML_CENTRAL_GESTAO = r"""
         <div class="campo"><label>Responsável</label><input name="responsavel" maxlength="100" placeholder="Ex: Mecânica"></div>
         <div class="campo"><label>Data Programada *</label><input type="date" name="proxima_execucao" required></div>
         <div class="campo completo"><label>Roteiro / Check-list Preventivo *</label><textarea name="atividade" data-max="2000" required placeholder="Pontos de inspeção, lubrificação..."></textarea></div>
-        <div class="campo completo"><button class="salvar" type="submit">+ Salvar Plano Preventivo</button></div>
+        <div class="campo completo"><button class="salvar" style="width:100%" type="submit">+ Salvar Plano Preventivo</button></div>
     </div></form></div></details>
 
     <section class="card">
@@ -2652,7 +2980,7 @@ HTML_CENTRAL_GESTAO = r"""
                     <input type="file" name="arquivo_excel" accept=".xlsx,.xls" required>
                 </div>
                 <div class="campo" style="display:flex;gap:10px;flex-wrap:wrap">
-                    <button type="submit" class="salvar">⬆ Importar Planilha PCM</button>
+                    <button type="submit" class="salvar" style="width:100%">⬆ Importar Planilha PCM</button>
                 </div>
             </div>
         </form>
@@ -2667,29 +2995,30 @@ HTML_CENTRAL_GESTAO = r"""
 
     <section class="card">
     <h2>Cronograma de Manutenção Preventiva</h2>
+    <p class="dica-mobile-card">💡 Toque no cartão para visualizar o roteiro preventivo.</p>
     <div class="tabela-wrapper">
     <table id="tabelaPCM" class="tabela-dinamica detalhavel">
     <thead><tr><th data-tipo="texto">Máquina</th><th data-tipo="texto">Tag</th><th data-tipo="texto">Setor</th><th data-tipo="texto">Frequência</th><th>Próxima Exec</th><th data-tipo="texto">Resp.</th><th>Status</th><th>Ações</th></tr></thead>
     <tbody>
     {% for p in planos %}
     <tr class="linha">
-        <td><strong>{{p.maquina}}</strong></td>
-        <td>{{p.codigo_maquina or '-'}}</td>
-        <td>{{p.setor or '-'}}</td>
-        <td><span class="tipo-badge tipo-preventiva">{{p.frequencia}}</span></td>
-        <td><strong class="{{ 'vencido' if p.status_calc=='Atrasado' else '' }}">{{p.proxima_execucao}}</strong></td>
-        <td>{{p.responsavel or '-'}}</td>
-        <td><span class="status {{ 'estoque-baixo' if p.status_calc=='Atrasado' else 'estoque-ok' }}">{{p.status_calc}}</span></td>
-        <td>
+        <td data-label="Máquina"><strong>{{p.maquina}}</strong></td>
+        <td data-label="Tag">{{p.codigo_maquina or '-'}}</td>
+        <td data-label="Setor">{{p.setor or '-'}}</td>
+        <td data-label="Frequência"><span class="tipo-badge tipo-preventiva">{{p.frequencia}}</span></td>
+        <td data-label="Próxima Exec"><strong class="{{ 'vencido' if p.status_calc=='Atrasado' else '' }}">{{p.proxima_execucao}}</strong></td>
+        <td data-label="Responsável">{{p.responsavel or '-'}}</td>
+        <td data-label="Status"><span class="status {{ 'estoque-baixo' if p.status_calc=='Atrasado' else 'estoque-ok' }}">{{p.status_calc}}</span></td>
+        <td data-label="Ações">
             <div class="acoes">
                 <form action="{{url_for('gerar_os_pcm', id=p.id)}}" method="POST" data-confirm="Gerar O.S. aberta para esta preventiva?" data-confirm-btn="Gerar O.S.">
-                    <button class="imprimir" title="Abrir O.S.">📋 O.S.</button>
+                    <button class="imprimir" title="Abrir O.S.">📋 Abrir O.S.</button>
                 </form>
                 <form action="{{url_for('concluir_plano_pcm', id=p.id)}}" method="POST" data-confirm="Concluir preventivo e reagendar?" data-confirm-btn="Concluir">
-                    <button class="finalizar" title="Concluir ciclo">✔</button>
+                    <button class="finalizar" title="Concluir ciclo">✔ Concluir</button>
                 </form>
-                <button type="button" class="editar-peca btn-editar-pcm" data-url="{{url_for('editar_plano_pcm', id=p.id)}}" data-maquina="{{p.maquina}}" data-codigo="{{p.codigo_maquina}}" data-setor="{{p.setor}}" data-frequencia="{{p.frequencia}}" data-responsavel="{{p.responsavel}}" data-proxima="{{p.proxima_execucao}}" data-atividade="{{p.atividade}}">✏️</button>
-                <form action="{{url_for('excluir_plano_pcm', id=p.id)}}" method="POST" data-perigo="1" data-confirm="Excluir plano?" data-confirm-btn="Excluir"><button class="excluir">✕</button></form>
+                <button type="button" class="editar-peca btn-editar-pcm" data-url="{{url_for('editar_plano_pcm', id=p.id)}}" data-maquina="{{p.maquina}}" data-codigo="{{p.codigo_maquina}}" data-setor="{{p.setor}}" data-frequencia="{{p.frequencia}}" data-responsavel="{{p.responsavel}}" data-proxima="{{p.proxima_execucao}}" data-atividade="{{p.atividade}}">✏️ Editar</button>
+                <form action="{{url_for('excluir_plano_pcm', id=p.id)}}" method="POST" data-perigo="1" data-confirm="Excluir plano?" data-confirm-btn="Excluir"><button class="excluir">✕ Excluir</button></form>
             </div>
         </td>
     </tr>
@@ -2724,9 +3053,9 @@ HTML_CENTRAL_GESTAO = r"""
         </div>
         <div class="campo completo"><label>Classificação / Criticidade da S.C. *</label>
             <div class="seg">
-                <input type="radio" id="scEmerg" name="tipo_sc" value="S.C. Emergencial" {% if not repor_item %}checked{% endif %}><label for="scEmerg">🚨 S.C. Emergencial</label>
-                <input type="radio" id="scProg" name="tipo_sc" value="S.C. Programada"><label for="scProg">📅 S.C. Programada</label>
-                <input type="radio" id="scRep" name="tipo_sc" value="S.C. Reposição / Estoque" {% if repor_item %}checked{% endif %}><label for="scRep">📦 S.C. Reposição / Estoque</label>
+                <input type="radio" id="scEmerg" name="tipo_sc" value="S.C. Emergencial" {% if not repor_item %}checked{% endif %}><label for="scEmerg">🚨 Emergencial</label>
+                <input type="radio" id="scProg" name="tipo_sc" value="S.C. Programada"><label for="scProg">📅 Programada</label>
+                <input type="radio" id="scRep" name="tipo_sc" value="S.C. Reposição / Estoque" {% if repor_item %}checked{% endif %}><label for="scRep">📦 Reposição</label>
             </div>
         </div>
         <div class="campo"><label>Solicitante *</label><input name="solicitante" required maxlength="100" value="Carlos"></div>
@@ -2745,9 +3074,9 @@ HTML_CENTRAL_GESTAO = r"""
                     </div>
                 </div>
             </div>
-            <button type="button" class="botao limpar" id="btnAddItemSC" style="margin-top:8px">+ Adicionar Outro Item</button>
+            <button type="button" class="botao limpar" id="btnAddItemSC" style="margin-top:8px;width:100%">+ Adicionar Outro Item</button>
         </div>
-        <div class="campo completo"><button class="salvar" type="submit">+ Registrar Solicitação de Compra</button></div>
+        <div class="campo completo"><button class="salvar" style="width:100%" type="submit">+ Registrar Solicitação de Compra</button></div>
     </div></form></div></details>
 
     <section class="card">
@@ -2767,24 +3096,25 @@ HTML_CENTRAL_GESTAO = r"""
 
     <section class="card">
     <h2>Solicitações de Compras Registradas</h2>
+    <p class="dica-mobile-card">💡 Toque no cartão da S.C. para ver os itens e links de referência.</p>
     <div class="tabela-wrapper">
     <table id="tabelaCompras" class="tabela-dinamica detalhavel">
     <thead><tr><th>Código S.C.</th><th>Criticidade</th><th>Solicitante</th><th>Centro Custo</th><th>Objeto</th><th>Qtd</th><th>Data</th><th>Status</th><th>Ações</th></tr></thead>
     <tbody>
     {% for sc in compras %}
     <tr class="linha" data-tipo="{{sc.tipo_sc}}">
-        <td><strong>{{sc.numero_sc}}</strong></td>
-        <td>
+        <td data-label="Código S.C."><strong>{{sc.numero_sc}}</strong></td>
+        <td data-label="Criticidade">
             {% if sc.tipo_sc == 'S.C. Emergencial' %}<span class="sc-badge-emergencial">🚨 Emergencial</span>
             {% elif sc.tipo_sc == 'S.C. Programada' %}<span class="sc-badge-programada">📅 Programada</span>
             {% else %}<span class="sc-badge-reposicao">📦 Reposição</span>{% endif %}
         </td>
-        <td>{{sc.solicitante}}</td>
-        <td>{{sc.centro_custo or '-'}}</td>
-        <td><strong>{{sc.objeto_solicitacao}}</strong> <span class="muted">({{sc.itens|length}} it)</span></td>
-        <td>{{ sc.itens|sum(attribute='quantidade') }}</td>
-        <td>{{sc.data_solicitacao}}</td>
-        <td>
+        <td data-label="Solicitante">{{sc.solicitante}}</td>
+        <td data-label="Centro Custo">{{sc.centro_custo or '-'}}</td>
+        <td data-label="Objeto"><strong>{{sc.objeto_solicitacao}}</strong> <span class="muted">({{sc.itens|length}} it)</span></td>
+        <td data-label="Qtd Total">{{ sc.itens|sum(attribute='quantidade') }}</td>
+        <td data-label="Data">{{sc.data_solicitacao}}</td>
+        <td data-label="Status">
             <select class="select-status-sc" data-sc-id="{{sc.id}}" data-val="{{sc.status_aprovacao}}">
                 <option value="Aguardando Aprovação" {% if sc.status_aprovacao == 'Aguardando Aprovação' %}selected{% endif %}>🟡 Aguardando</option>
                 <option value="Em Cotação" {% if sc.status_aprovacao == 'Em Cotação' %}selected{% endif %}>🔵 Em Cotação</option>
@@ -2793,15 +3123,16 @@ HTML_CENTRAL_GESTAO = r"""
                 <option value="Finalizado / Comprado" {% if sc.status_aprovacao == 'Finalizado / Comprado' %}selected{% endif %}>🟣 Comprado</option>
             </select>
         </td>
-        <td>
+        <td data-label="Ações">
             <div class="acoes">
-                <a href="{{url_for('imprimir_sc', id=sc.id)}}" target="_blank" class="botao imprimir" title="Imprimir A4">🖨️</a>
-                <form action="{{url_for('excluir_compras', id=sc.id)}}" method="POST" data-perigo="1" data-confirm="Excluir S.C. {{sc.numero_sc}}?" data-confirm-btn="Excluir"><button class="excluir">✕</button></form>
+                <a href="{{url_for('imprimir_sc', id=sc.id)}}" target="_blank" class="botao imprimir" title="Imprimir A4">🖨️ A4</a>
+                <form action="{{url_for('excluir_compras', id=sc.id)}}" method="POST" data-perigo="1" data-confirm="Excluir S.C. {{sc.numero_sc}}?" data-confirm-btn="Excluir"><button class="excluir">✕ Excluir</button></form>
             </div>
         </td>
     </tr>
     <tr class="detalhe"><td colspan="9"><strong style="color:var(--or2)">Itens:</strong>
-        <table style="margin-top:8px;background:#14171f"><thead><tr><th>#</th><th>Descritivo</th><th>Qtd</th><th>Unid</th><th>Ref / Link</th></tr></thead><tbody>
+        <div class="tabela-wrapper" style="overflow-x:auto;margin-top:8px">
+        <table style="background:#14171f;min-width:560px"><thead><tr><th>#</th><th>Descritivo</th><th>Qtd</th><th>Unid</th><th>Ref / Link</th></tr></thead><tbody>
         {% for it in sc.itens %}
         {% set ref = (it.link_referencia or '')|trim %}
         <tr>
@@ -2821,6 +3152,7 @@ HTML_CENTRAL_GESTAO = r"""
         </tr>
         {% endfor %}
         </tbody></table>
+        </div>
     </td></tr>
     {% else %}
     <tr><td colspan="9" class="vazio">Nenhuma S.C. cadastrada.</td></tr>
@@ -2841,7 +3173,7 @@ HTML_CENTRAL_GESTAO = r"""
             <span class="icone">🔄</span>
             <span>MTBF por Máquina</span>
             <strong style="color:#4ade80" id="valorMTBF">{{mtbf_str}}</strong>
-            <select id="selectMaquinaMTBF" style="margin-top:8px;padding:5px 9px;font-size:12px;border-radius:8px">
+            <select id="selectMaquinaMTBF" style="margin-top:8px;padding:5px 9px;font-size:13px;border-radius:8px;min-height:38px">
                 <option value="geral">Todas as máquinas (Média)</option>
                 {% for m in mtbf_maquinas %}
                 <option value="{{m.chave}}">{{m.nome}} ({{m.corretivas}} falhas)</option>
@@ -2868,7 +3200,7 @@ HTML_CENTRAL_GESTAO = r"""
         <section class="card" style="margin-bottom:0">
             <h2>🏭 Confiabilidade por Máquina (MTBF & MTTR Individual)</h2>
             {% if mtbf_maquinas %}
-            <div class="tabela-wrapper" style="margin-top:10px">
+            <div class="tabela-wrapper" style="margin-top:10px;overflow-x:auto">
                 <table style="min-width:540px">
                     <thead><tr><th>Máquina</th><th>Corretivas</th><th>MTBF (Entre Falhas)</th><th>MTTR (Reparo)</th><th>Horas Totais</th></tr></thead>
                     <tbody>
@@ -2937,7 +3269,7 @@ HTML_CENTRAL_GESTAO = r"""
 
     <section class="card">
         <h2>🛡️ Trilha de Auditoria (Últimos 100 Eventos Críticos)</h2>
-        <div class="tabela-wrapper">
+        <div class="tabela-wrapper" style="overflow-x:auto">
             <table style="min-width:680px">
                 <thead><tr><th>Data / Hora</th><th>Módulo</th><th>Ação</th><th>Detalhes</th></tr></thead>
                 <tbody>
@@ -2953,6 +3285,13 @@ HTML_CENTRAL_GESTAO = r"""
 </div>
 
 <footer class="rodape">Central de Gestão de Manutenção — Sistema JAMAICA</footer></div>
+
+<nav class="mobile-bottom-nav" aria-label="Navegação Rápida Mobile">
+    <a href="{{url_for('lobby')}}"><span class="nav-ico">🏠</span>Lobby</a>
+    <a href="{{url_for('dashboard')}}"><span class="nav-ico">📋</span>O.S.</a>
+    <a href="{{url_for('central_gestao')}}" class="ativo"><span class="nav-ico">🔐</span>Gestão</a>
+    <a href="{{url_for('dashboard')}}#cardNovaOS"><span class="nav-ico">➕</span>Nova O.S.</a>
+</nav>
 
 <div class="overlay" id="modalMov"><div class="modal"><h3 id="movTitulo"></h3><p class="muted" id="movSub"></p><form id="formMov" method="POST"><div class="seg"><input type="radio" id="tipoRet" name="tipo" value="Retirada" checked><label for="tipoRet">▼ Retirar</label><input type="radio" id="tipoEnt" name="tipo" value="Entrada"><label for="tipoEnt">▲ Adicionar</label></div><div class="campo"><label>Quantidade</label><div class="stepper"><button type="button" data-step="-1">−</button><input type="number" name="qtd" id="movQtd" min="1" value="1" required><button type="button" data-step="1">+</button></div></div><p class="saldo" id="boxSaldo">Saldo após a operação: <strong id="movSaldo">0</strong></p><div class="campo"><label id="movLblSol">Solicitante / O.S. *</label><input type="text" name="solicitante" id="movSol" maxlength="100" autocomplete="off"></div><div class="modal-acoes"><button type="button" class="limpar" data-fechar>Cancelar</button><button type="submit" class="salvar">Confirmar</button></div></form></div></div>
 
@@ -3388,6 +3727,69 @@ def ver_evidencia_os(filename):
     return send_from_directory(
         EVIDENCIAS_DIR, nome_limpo, mimetype=EXTENSOES_EVIDENCIA[ext]
     )
+
+
+@app.route("/os/evidencia-atualizar/<int:id>", methods=["POST"])
+def atualizar_evidencia_os(id):
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem or ordem.status != "Finalizada":
+        flash("Ordem de Serviço inválida ou ainda não finalizada.")
+        return redirect(url_for("dashboard"))
+
+    arquivo_evidencia = request.files.get("evidencia_foto")
+    if not arquivo_evidencia or not arquivo_evidencia.filename:
+        flash("Selecione uma imagem para anexar como evidência.")
+        return redirect(url_for("dashboard"))
+
+    ev_arquivo, ev_nome, erro_ev = salvar_evidencia_os(
+        arquivo_evidencia, ordem.numero_os
+    )
+    if erro_ev:
+        flash(erro_ev)
+        return redirect(url_for("dashboard"))
+
+    try:
+        ev_antiga = ordem.evidencia_imagem
+        ordem.evidencia_imagem = ev_arquivo
+        ordem.evidencia_nome = ev_nome
+        db.session.commit()
+        remover_evidencia_os(ev_antiga)
+        registrar_auditoria(
+            "Ordens de Serviço",
+            "Evidência O.S. Atualizada",
+            f"O.S. {ordem.numero_os} recebeu foto de evidência ({ev_nome})",
+        )
+        flash(f"Evidência da O.S. {ordem.numero_os} salva com sucesso!")
+    except Exception:
+        db.session.rollback()
+        remover_evidencia_os(ev_arquivo)
+        flash("Erro ao salvar a evidência fotográfica.")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/os/evidencia-remover/<int:id>", methods=["POST"])
+def remover_evidencia_rota(id):
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem:
+        flash("Ordem de Serviço não encontrada.")
+        return redirect(url_for("dashboard"))
+
+    try:
+        ev_antiga = ordem.evidencia_imagem
+        ordem.evidencia_imagem = ""
+        ordem.evidencia_nome = ""
+        db.session.commit()
+        remover_evidencia_os(ev_antiga)
+        registrar_auditoria(
+            "Ordens de Serviço",
+            "Evidência O.S. Removida",
+            f"Foto de evidência removida da O.S. {ordem.numero_os}",
+        )
+        flash(f"Evidência da O.S. {ordem.numero_os} removida.")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao remover evidência.")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/api/os/novas")
@@ -4041,9 +4443,9 @@ def central_gestao():
         total_corretiva=total_corretiva,
         total_fin=total_fin,
         total_meses=len(meses_ordenados),
-        pct_geral_prev=round(total_preventiva / total_fin * 100, 1)
-        if total_fin
-        else 0,
+        pct_geral_prev=(
+            round(total_preventiva / total_fin * 100, 1) if total_fin else 0
+        ),
         mttr_str=mttr_str,
         mtbf_str=mtbf_str,
         mtbf_maquinas=mtbf_maquinas,
@@ -4052,85 +4454,94 @@ def central_gestao():
         meses=meses_eq,
         mes_sel=mes_sel,
         logs=logs,
+        is_postgres=IS_POSTGRES,
         tamanho_db=tamanho_kb,
         backups_locais=qtd_backups,
-        is_postgres=IS_POSTGRES,
     )
 
 
+# ==============================================================================
+# ROTAS DE AÇÕES DA CENTRAL DE GESTÃO
+# ==============================================================================
 @app.route("/estoque/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_peca():
     codigo = request.form.get("codigo", "").strip().upper()
     nome = request.form.get("nome", "").strip()
-    try:
-        quantidade = int(request.form.get("quantidade", 0))
-        estoque_minimo = int(request.form.get("estoque_minimo", 2))
-    except ValueError:
-        flash("Valores inválidos.")
-        return redirect(url_for("central_gestao"))
     if not codigo or not nome:
-        flash("Código e Nome obrigatórios.")
-        return redirect(url_for("central_gestao"))
+        flash("Código e nome obrigatórios.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    try:
+        quantidade = max(0, int(request.form.get("quantidade", 0)))
+        estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
+    except ValueError:
+        flash("Quantidades inválidas.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+
     try:
         with estoque_lock:
+            if ItemEstoque.query.filter_by(codigo=codigo).first():
+                flash(f"O código '{codigo}' já existe.")
+                return redirect(url_for("central_gestao", tab="estoque"))
             nova_peca = ItemEstoque(
                 codigo=codigo,
                 nome=nome,
-                categoria=request.form.get("categoria", "Geral"),
-                localizacao=request.form.get("localizacao", ""),
+                categoria=request.form.get("categoria", "Geral").strip()
+                or "Geral",
+                localizacao=request.form.get("localizacao", "").strip(),
                 quantidade=quantidade,
                 estoque_minimo=estoque_minimo,
                 ultima_atualizacao=agora_formatado(),
             )
             db.session.add(nova_peca)
+            if quantidade > 0:
+                db.session.add(
+                    HistoricoMovimentacao(
+                        peca_codigo=codigo,
+                        peca_nome=nome,
+                        tipo="Entrada",
+                        quantidade=quantidade,
+                        solicitante="Cadastro Inicial",
+                        data_hora=agora_formatado(),
+                    )
+                )
             db.session.commit()
             registrar_auditoria(
-                "Estoque", "Cadastro de Peça", f"SKU {codigo} — {nome} ({quantidade} un)"
+                "Estoque", "Novo SKU", f"Peça {codigo} - {nome} ({quantidade} un)"
             )
-        flash(f"Peça {nome} cadastrada!")
+        flash(f"Peça '{nome}' cadastrada!")
     except Exception:
         db.session.rollback()
         flash("Erro ao cadastrar peça.")
-    return redirect(url_for("central_gestao"))
-
-
-@app.route("/estoque/editar/<int:id>", methods=["POST"])
-@requer_login
-def editar_peca(id):
-    peca = db.session.get(ItemEstoque, id)
-    if peca:
-        peca.codigo = request.form.get("codigo", "").strip().upper()
-        peca.nome = request.form.get("nome", "").strip()
-        peca.categoria = request.form.get("categoria", "").strip()
-        peca.localizacao = request.form.get("localizacao", "").strip()
-        try:
-            peca.estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
-        except ValueError:
-            pass
-        peca.ultima_atualizacao = agora_formatado()
-        db.session.commit()
-        registrar_auditoria("Estoque", "Edição de Peça", f"SKU {peca.codigo} atualizado")
-        flash("Peça atualizada!")
-    return redirect(url_for("central_gestao"))
+    return redirect(url_for("central_gestao", tab="estoque"))
 
 
 @app.route("/estoque/movimentar/<int:id>", methods=["POST"])
 @requer_login
 def movimentar_estoque(id):
     peca = db.session.get(ItemEstoque, id)
-    tipo = request.form.get("tipo")
+    if not peca:
+        flash("Peça não encontrada.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    tipo = request.form.get("tipo", "Retirada")
     solicitante = request.form.get("solicitante", "").strip()
     try:
-        qtd = int(request.form.get("qtd", 0))
+        qtd = int(request.form.get("qtd", 1))
+        if qtd <= 0:
+            raise ValueError
     except ValueError:
-        qtd = 0
-    if peca and qtd > 0:
+        flash("Quantidade inválida.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+
+    try:
         with estoque_lock:
             if tipo == "Retirada":
+                if not solicitante:
+                    flash("Informe o solicitante/O.S.")
+                    return redirect(url_for("central_gestao", tab="estoque"))
                 if peca.quantidade < qtd:
-                    flash("Estoque insuficiente!")
-                    return redirect(url_for("central_gestao"))
+                    flash(f"Saldo insuficiente! Atual: {peca.quantidade}.")
+                    return redirect(url_for("central_gestao", tab="estoque"))
                 peca.quantidade -= qtd
             else:
                 peca.quantidade += qtd
@@ -4141,18 +4552,58 @@ def movimentar_estoque(id):
                     peca_nome=peca.nome,
                     tipo=tipo,
                     quantidade=qtd,
-                    solicitante=solicitante or "Almoxarifado",
+                    solicitante=solicitante or "Almoxarifado / NF",
                     data_hora=agora_formatado(),
                 )
             )
             db.session.commit()
             registrar_auditoria(
                 "Estoque",
-                "Movimentação",
-                f"{tipo} de {qtd}x SKU {peca.codigo} ({peca.nome})",
+                f"Movimentação ({tipo})",
+                f"{qtd}x {peca.codigo} - {peca.nome}",
             )
         flash("Movimentação registrada!")
-    return redirect(url_for("central_gestao"))
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao movimentar estoque.")
+    return redirect(url_for("central_gestao", tab="estoque"))
+
+
+@app.route("/estoque/editar/<int:id>", methods=["POST"])
+@requer_login
+def editar_peca(id):
+    peca = db.session.get(ItemEstoque, id)
+    if not peca:
+        flash("Peça não encontrada.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    codigo = request.form.get("codigo", "").strip().upper()
+    nome = request.form.get("nome", "").strip()
+    try:
+        estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
+    except ValueError:
+        estoque_minimo = 2
+    try:
+        with estoque_lock:
+            if (
+                codigo != peca.codigo
+                and ItemEstoque.query.filter_by(codigo=codigo).first()
+            ):
+                flash("Código já em uso.")
+                return redirect(url_for("central_gestao", tab="estoque"))
+            peca.codigo = codigo
+            peca.nome = nome
+            peca.categoria = (
+                request.form.get("categoria", "Geral").strip() or "Geral"
+            )
+            peca.localizacao = request.form.get("localizacao", "").strip()
+            peca.estoque_minimo = estoque_minimo
+            peca.ultima_atualizacao = agora_formatado()
+            db.session.commit()
+        flash("Peça atualizada!")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao editar peça.")
+    return redirect(url_for("central_gestao", tab="estoque"))
 
 
 @app.route("/estoque/excluir/<int:id>", methods=["POST"])
@@ -4160,45 +4611,49 @@ def movimentar_estoque(id):
 def excluir_peca(id):
     peca = db.session.get(ItemEstoque, id)
     if peca:
-        nome = peca.nome
         db.session.delete(peca)
         db.session.commit()
-        registrar_auditoria("Estoque", "Exclusão de Peça", f"Peça {nome} excluída")
         flash("Peça excluída!")
-    return redirect(url_for("central_gestao"))
+    return redirect(url_for("central_gestao", tab="estoque"))
 
 
 @app.route("/estoque/excel")
 @requer_login
 def excel_estoque():
-    pecas = ItemEstoque.query.all()
+    pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
+    colunas = [
+        "Código",
+        "Peça",
+        "Categoria",
+        "Localização",
+        "Saldo",
+        "Mínimo",
+        "Status",
+        "Atualização",
+    ]
     dados = [
         {
             "Código": p.codigo,
-            "Nome": p.nome,
+            "Peça": p.nome,
             "Categoria": p.categoria,
             "Localização": p.localizacao,
             "Saldo": p.quantidade,
             "Mínimo": p.estoque_minimo,
             "Status": (
-                "Baixo" if p.quantidade <= p.estoque_minimo else "Normal"
+                "Baixo Estoque"
+                if p.quantidade <= p.estoque_minimo
+                else "Normal"
             ),
+            "Atualização": p.ultima_atualizacao,
         }
         for p in pecas
     ]
-    registrar_auditoria(
-        "Relatórios", "Exportação Excel Estoque", "Planilha de estoque gerada."
-    )
     return gerar_excel(
-        pd.DataFrame(dados), "Estoque", "estoque", coluna_status="Status"
+        pd.DataFrame(dados, columns=colunas),
+        "Estoque",
+        "estoque_manutencao",
+        coluna_status="Status",
     )
-
-
-@app.route("/spare-parts/qrcodes")
-@requer_login
-def etiquetas_qrcode():
-    maquinas = MaquinaSpare.query.all()
-    return render_template_string(HTML_QRCODES, maquinas=maquinas)
 
 
 @app.route("/spare-parts/cadastrar", methods=["POST"])
@@ -4212,15 +4667,17 @@ def cadastrar_maquina_spare():
                 maquina=maquina,
                 modelo=modelo,
                 setor=request.form.get("setor", "").strip(),
-                pecas_necessarias=request.form.get("pecas_necessarias", "").strip(),
+                pecas_necessarias=request.form.get(
+                    "pecas_necessarias", ""
+                ).strip(),
             )
         )
         db.session.commit()
         registrar_auditoria(
-            "Spare Parts", "Cadastro Equipamento", f"{maquina} ({modelo})"
+            "Spare Parts", "Cadastro Ativo", f"Máquina {maquina} ({modelo})"
         )
         flash("Equipamento cadastrado!")
-    return redirect(url_for("central_gestao"))
+    return redirect(url_for("central_gestao", tab="spare"))
 
 
 @app.route("/spare-parts/editar/<int:id>", methods=["POST"])
@@ -4229,26 +4686,30 @@ def editar_maquina_spare(id):
     maq = db.session.get(MaquinaSpare, id)
     if not maq:
         flash("Equipamento não encontrado.")
-        return redirect(url_for("central_gestao"))
+        return redirect(url_for("central_gestao", tab="spare"))
+
     maquina = request.form.get("maquina", "").strip()
     modelo = request.form.get("modelo", "").strip()
     if not maquina or not modelo:
-        flash("Nome da Máquina e Modelo são obrigatórios.")
-        return redirect(url_for("central_gestao"))
+        flash("Máquina e modelo são obrigatórios.")
+        return redirect(url_for("central_gestao", tab="spare"))
+
     try:
         maq.maquina = maquina
         maq.modelo = modelo
         maq.setor = request.form.get("setor", "").strip()
-        maq.pecas_necessarias = request.form.get("pecas_necessarias", "").strip()
-        registrar_auditoria(
-            "Spare Parts", "Edição de Equipamento", f"{maquina} ({modelo})"
-        )
+        maq.pecas_necessarias = request.form.get(
+            "pecas_necessarias", ""
+        ).strip()
         db.session.commit()
-        flash(f"Equipamento '{maquina}' atualizado com sucesso!")
+        registrar_auditoria(
+            "Spare Parts", "Edição Ativo", f"Máquina {maquina} ({modelo}) atualizada"
+        )
+        flash("Equipamento atualizado com sucesso!")
     except Exception:
         db.session.rollback()
         flash("Erro ao atualizar equipamento.")
-    return redirect(url_for("central_gestao"))
+    return redirect(url_for("central_gestao", tab="spare"))
 
 
 @app.route("/spare-parts/excluir/<int:id>", methods=["POST"])
@@ -4256,41 +4717,34 @@ def editar_maquina_spare(id):
 def excluir_maquina_spare(id):
     maq = db.session.get(MaquinaSpare, id)
     if maq:
-        nome = maq.maquina
         db.session.delete(maq)
         db.session.commit()
-        registrar_auditoria("Spare Parts", "Exclusão Equipamento", f"Equipamento {nome} excluído")
-        flash("Equipamento excluído!")
-    return redirect(url_for("central_gestao"))
+        flash("Equipamento removido!")
+    return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/spare-parts/<int:id>/adicionar-peca", methods=["POST"])
+@app.route("/spare-parts/peca/adicionar/<int:id>", methods=["POST"])
 @requer_login
 def adicionar_peca_spare(id):
     maq = db.session.get(MaquinaSpare, id)
-    nome_peca = request.form.get("nome_peca", "").strip()
-    if maq and nome_peca:
+    nome = request.form.get("nome_peca", "").strip()
+    if maq and nome:
         try:
-            q = int(request.form.get("quantidade", 1))
+            qtd = max(1, int(request.form.get("quantidade", 1)))
         except ValueError:
-            q = 1
+            qtd = 1
         db.session.add(
             PecaSpare(
                 maquina_spare_id=maq.id,
-                nome_peca=nome_peca,
+                nome_peca=nome,
                 codigo_peca=request.form.get("codigo_peca", "").strip().upper(),
-                quantidade=q,
+                quantidade=qtd,
                 observacao=request.form.get("observacao", "").strip(),
             )
         )
         db.session.commit()
-        registrar_auditoria(
-            "Spare Parts",
-            "Vínculo de Peça",
-            f"Peça {nome_peca} vinculada a {maq.maquina}",
-        )
-        flash("Peça de reposição vinculada!")
-    return redirect(url_for("central_gestao"))
+        flash("Peça vinculada à máquina!")
+    return redirect(url_for("central_gestao", tab="spare"))
 
 
 @app.route("/spare-parts/peca/excluir/<int:id>", methods=["POST"])
@@ -4300,141 +4754,44 @@ def excluir_peca_spare(id):
     if p:
         db.session.delete(p)
         db.session.commit()
-        registrar_auditoria("Spare Parts", "Remoção Peça Spare", f"Peça {p.nome_peca} desvinculada")
         flash("Peça removida!")
-    return redirect(url_for("central_gestao"))
+    return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/pcm/gerar-os/<int:id>", methods=["POST"])
+@app.route("/spare-parts/qrcodes")
 @requer_login
-def gerar_os_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if plano:
-        atual = parse_data_br(plano.proxima_execucao) or date.today()
-        nova = avancar_data(atual, plano.frequencia)
-        with os_lock:
-            db.session.add(
-                OrdemServico(
-                    numero_os=gerar_numero_os(),
-                    solicitante="PCM Programado",
-                    setor=plano.maquina,
-                    titulo=f"Preventiva {plano.frequencia}",
-                    descricao=plano.atividade,
-                    prioridade="Média",
-                    responsavel=plano.responsavel or "",
-                    abertura=agora_formatado(),
-                    status="Aberta",
-                    tipo_manutencao="Preventiva",
-                )
-            )
-            plano.proxima_execucao = nova.strftime("%d/%m/%Y")
-            db.session.commit()
-            registrar_auditoria(
-                "PCM", "Geração O.S. Preventiva", f"Preventiva gerada para {plano.maquina}"
-            )
-        flash("O.S. preventiva gerada na fila!")
-    return redirect(url_for("central_gestao"))
-
-
-@app.route("/pcm/concluir/<int:id>", methods=["POST"])
-@requer_login
-def concluir_plano_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if plano:
-        atual = parse_data_br(plano.proxima_execucao) or date.today()
-        nova = avancar_data(atual, plano.frequencia)
-        with os_lock:
-            ag = agora_formatado()
-            db.session.add(
-                OrdemServico(
-                    numero_os=gerar_numero_os(),
-                    solicitante="PCM Automático",
-                    setor=plano.maquina,
-                    titulo=f"Preventiva {plano.frequencia}",
-                    descricao=plano.atividade,
-                    prioridade="Média",
-                    responsavel=plano.responsavel or "",
-                    abertura=ag,
-                    finalizacao=ag,
-                    status="Finalizada",
-                    tipo_manutencao="Preventiva",
-                    horas_trabalhadas=1.0,
-                    observacao_tecnica="Concluído via PCM.",
-                )
-            )
-            plano.proxima_execucao = nova.strftime("%d/%m/%Y")
-            db.session.commit()
-            registrar_auditoria(
-                "PCM", "Conclusão Preventiva", f"Plano concluído e reagendado para {plano.maquina}"
-            )
-        flash("Preventiva concluída e reagendada!")
-    return redirect(url_for("central_gestao"))
+def etiquetas_qrcode():
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
+    return render_template_string(HTML_QRCODES, maquinas=maquinas)
 
 
 @app.route("/pcm/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_plano_pcm():
-    maq = request.form.get("maquina", "").strip()
-    ativ = request.form.get("atividade", "").strip()
-    prox = request.form.get("proxima_execucao", "").strip()
-    if maq and ativ and prox:
-        if "-" in prox:
-            p = prox.split("-")
-            prox = f"{p[2]}/{p[1]}/{p[0]}"
+    maquina = request.form.get("maquina", "").strip()
+    atividade = request.form.get("atividade", "").strip()
+    data_exec = parse_data_br(request.form.get("proxima_execucao", ""))
+    if maquina and atividade and data_exec:
         db.session.add(
             PlanoPreventivo(
-                maquina=maq,
+                maquina=maquina,
                 codigo_maquina=request.form.get("codigo_maquina", "")
                 .strip()
                 .upper(),
                 setor=request.form.get("setor", "").strip(),
-                atividade=ativ,
+                atividade=atividade,
                 frequencia=request.form.get("frequencia", "Mensal"),
                 responsavel=request.form.get("responsavel", "").strip(),
-                proxima_execucao=prox,
+                proxima_execucao=data_exec.strftime("%d/%m/%Y"),
+                status="Agendado",
             )
         )
         db.session.commit()
-        registrar_auditoria("PCM", "Cadastro Plano", f"Plano preventivo criado para {maq}")
-        flash("Plano preventivo cadastrado!")
-    return redirect(url_for("central_gestao"))
-
-
-@app.route("/pcm/editar/<int:id>", methods=["POST"])
-@requer_login
-def editar_plano_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if plano:
-        plano.maquina = request.form.get("maquina", "").strip()
-        plano.codigo_maquina = (
-            request.form.get("codigo_maquina", "").strip().upper()
+        registrar_auditoria(
+            "PCM", "Novo Plano", f"Preventiva cadastrada para {maquina}"
         )
-        plano.setor = request.form.get("setor", "").strip()
-        plano.atividade = request.form.get("atividade", "").strip()
-        plano.frequencia = request.form.get("frequencia", "Mensal")
-        plano.responsavel = request.form.get("responsavel", "").strip()
-        prox = request.form.get("proxima_execucao", "").strip()
-        if "-" in prox:
-            p = prox.split("-")
-            prox = f"{p[2]}/{p[1]}/{p[0]}"
-        plano.proxima_execucao = prox
-        db.session.commit()
-        registrar_auditoria("PCM", "Edição Plano", f"Plano preventivo atualizado ({plano.maquina})")
-        flash("Plano preventivo atualizado!")
-    return redirect(url_for("central_gestao"))
-
-
-@app.route("/pcm/excluir/<int:id>", methods=["POST"])
-@requer_login
-def excluir_plano_pcm(id):
-    p = db.session.get(PlanoPreventivo, id)
-    if p:
-        maq = p.maquina
-        db.session.delete(p)
-        db.session.commit()
-        registrar_auditoria("PCM", "Exclusão Plano", f"Plano preventivo excluído ({maq})")
-        flash("Plano excluído!")
-    return redirect(url_for("central_gestao"))
+        flash("Plano preventivo cadastrado!")
+    return redirect(url_for("central_gestao", tab="pcm"))
 
 
 @app.route("/pcm/importar-excel", methods=["POST"])
@@ -4446,124 +4803,224 @@ def importar_excel_pcm():
         return redirect(url_for("central_gestao", tab="pcm"))
 
     nome_arq = arquivo.filename.lower()
-    if not nome_arq.endswith((".xlsx", ".xls")):
-        flash("Formato inválido. Envie apenas arquivos .xlsx ou .xls.")
+    if not (nome_arq.endswith(".xlsx") or nome_arq.endswith(".xls")):
+        flash("Formato inválido. Envie uma planilha .xlsx ou .xls.")
         return redirect(url_for("central_gestao", tab="pcm"))
 
     try:
-        engine = "openpyxl" if nome_arq.endswith(".xlsx") else "xlrd"
-        df = pd.read_excel(BytesIO(arquivo.read()), engine=engine)
-    except Exception as e:
-        flash(f"Erro ao ler a planilha Excel: {e}")
+        df = pd.read_excel(arquivo)
+    except Exception:
+        flash(
+            "Não foi possível ler o arquivo Excel. Verifique se está corrompido."
+        )
         return redirect(url_for("central_gestao", tab="pcm"))
 
-    if df is None or df.empty:
+    if df.empty:
         flash("A planilha enviada está vazia.")
         return redirect(url_for("central_gestao", tab="pcm"))
 
-    def norm_col(c):
-        s = str(c or "").strip().lower()
-        s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
-        return s
+    col_map = {}
+    for col in df.columns:
+        c_norm = (
+            str(col)
+            .strip()
+            .lower()
+            .replace("á", "a")
+            .replace("ã", "a")
+            .replace("é", "e")
+            .replace("ê", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("õ", "o")
+            .replace("ú", "u")
+            .replace("ç", "c")
+        )
+        if any(k in c_norm for k in ("maquina", "equipamento", "ativo")):
+            col_map.setdefault("maquina", col)
+        elif any(k in c_norm for k in ("tag", "codigo", "cod")):
+            col_map.setdefault("codigo", col)
+        elif any(k in c_norm for k in ("setor", "area", "linha")):
+            col_map.setdefault("setor", col)
+        elif any(
+            k in c_norm for k in ("frequencia", "periodicidade", "ciclo", "periodo")
+        ):
+            col_map.setdefault("frequencia", col)
+        elif any(
+            k in c_norm for k in ("data", "proxima", "execucao", "programada", "vencimento")
+        ):
+            col_map.setdefault("data", col)
+        elif any(k in c_norm for k in ("responsavel", "resp", "executante", "equipe")):
+            col_map.setdefault("responsavel", col)
+        elif any(
+            k in c_norm for k in ("atividade", "roteiro", "checklist", "descricao", "servico")
+        ):
+            col_map.setdefault("atividade", col)
 
-    col_map = {norm_col(c): c for c in df.columns}
-
-    def pegar_valor(linha, candidatas):
-        for cand in candidatas:
-            chave = norm_col(cand)
-            if chave in col_map:
-                val = linha[col_map[chave]]
-                if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                    texto = str(val).strip()
-                    if texto and texto.lower() != "nan":
-                        return val
-        return None
+    if "maquina" not in col_map or "atividade" not in col_map:
+        flash(
+            "A planilha precisa conter ao menos as colunas 'Máquina' e"
+            " 'Atividade' (ou 'Roteiro')."
+        )
+        return redirect(url_for("central_gestao", tab="pcm"))
 
     importados = 0
     ignorados = 0
+    hoje_dt = date.today()
 
     try:
-        for _, linha in df.iterrows():
-            maq_raw = pegar_valor(
-                linha,
-                ["maquina", "máquina", "maquina_equipamento", "equipamento", "ativo"],
-            )
-            ativ_raw = pegar_valor(
-                linha,
-                [
-                    "atividade",
-                    "roteiro",
-                    "roteiro_check_list_preventivo",
-                    "check_list",
-                    "checklist",
-                    "descricao",
-                ],
-            )
-            maquina = str(maq_raw).strip() if maq_raw is not None else ""
-            atividade = str(ativ_raw).strip() if ativ_raw is not None else ""
-
-            if not maquina or not atividade:
+        for _, row in df.iterrows():
+            raw_maq = row.get(col_map["maquina"])
+            raw_ativ = row.get(col_map["atividade"])
+            if pd.isna(raw_maq) or pd.isna(raw_ativ):
                 ignorados += 1
                 continue
 
-            tag_raw = pegar_valor(
-                linha, ["tag", "codigo", "tag_codigo", "codigo_maquina"]
+            maquina = str(raw_maq).strip()
+            atividade = str(raw_ativ).strip()
+            if not maquina or not atividade or maquina.lower() == "nan":
+                ignorados += 1
+                continue
+
+            codigo = ""
+            if "codigo" in col_map and pd.notna(row.get(col_map["codigo"])):
+                codigo = str(row.get(col_map["codigo"])).strip().upper()
+
+            setor = ""
+            if "setor" in col_map and pd.notna(row.get(col_map["setor"])):
+                setor = str(row.get(col_map["setor"])).strip()
+
+            freq_raw = (
+                row.get(col_map["frequencia"]) if "frequencia" in col_map else ""
             )
-            setor_raw = pegar_valor(linha, ["setor", "area", "área", "centro_custo"])
-            freq_raw = pegar_valor(
-                linha, ["frequencia", "frequência", "periodicidade", "ciclo"]
-            )
-            resp_raw = pegar_valor(
-                linha, ["responsavel", "responsável", "resp", "equipe"]
-            )
-            data_raw = pegar_valor(
-                linha,
-                [
-                    "proxima_execucao",
-                    "próxima_execução",
-                    "proxima",
-                    "data_programada",
-                    "data",
-                    "prox_exec",
-                ],
+            frequencia = normalizar_frequencia_pcm(
+                "" if pd.isna(freq_raw) else freq_raw
             )
 
-            data_obj = parse_data_br(data_raw) or date.today()
+            resp = ""
+            if "responsavel" in col_map and pd.notna(
+                row.get(col_map["responsavel"])
+            ):
+                resp = str(row.get(col_map["responsavel"])).strip()
+
+            data_raw = row.get(col_map["data"]) if "data" in col_map else None
+            data_exec = parse_data_br(data_raw) or hoje_dt
+
             db.session.add(
                 PlanoPreventivo(
                     maquina=maquina[:150],
-                    codigo_maquina=str(tag_raw or "").strip().upper()[:50],
-                    setor=str(setor_raw or "").strip()[:100],
+                    codigo_maquina=codigo[:50],
+                    setor=setor[:100],
                     atividade=atividade[:2000],
-                    frequencia=normalizar_frequencia_pcm(freq_raw),
-                    responsavel=str(resp_raw or "").strip()[:100],
-                    proxima_execucao=data_obj.strftime("%d/%m/%Y"),
+                    frequencia=frequencia,
+                    responsavel=resp[:100],
+                    proxima_execucao=data_exec.strftime("%d/%m/%Y"),
+                    status="Agendado",
                 )
             )
             importados += 1
 
-        if importados == 0:
-            db.session.rollback()
-            flash(
-                "Nenhum plano válido encontrado. Verifique se as colunas de Máquina e"
-                " Atividade/Roteiro estão preenchidas."
+        db.session.commit()
+        if importados > 0:
+            registrar_auditoria(
+                "PCM",
+                "Importação Excel",
+                f"{importados} plano(s) preventivo(s) importado(s) via Excel.",
             )
-            return redirect(url_for("central_gestao", tab="pcm"))
+            msg = f"{importados} plano(s) preventivo(s) importado(s) com sucesso!"
+            if ignorados:
+                msg += f" ({ignorados} linha(s) incompleta(s) ignorada(s))."
+            flash(msg)
+        else:
+            flash("Nenhuma linha válida encontrada na planilha.")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao processar a importação da planilha PCM.")
 
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/gerar-os/<int:id>", methods=["POST"])
+@requer_login
+def gerar_os_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        with os_lock:
+            nova = OrdemServico(
+                numero_os=gerar_numero_os(),
+                solicitante="PCM Automático",
+                setor=(
+                    f"{plano.maquina} ({plano.codigo_maquina})"
+                    if plano.codigo_maquina
+                    else plano.maquina
+                ),
+                titulo=f"Preventiva {plano.frequencia} — {plano.maquina}",
+                descricao=plano.atividade,
+                prioridade="Média",
+                responsavel=plano.responsavel or "Equipe Manutenção",
+                abertura=agora_formatado(),
+                status="Aberta",
+                tipo_manutencao="Preventiva",
+            )
+            db.session.add(nova)
+            db.session.commit()
+            registrar_auditoria(
+                "PCM",
+                "Geração O.S.",
+                f"O.S. {nova.numero_os} gerada do plano {plano.maquina}",
+            )
+        flash(f"O.S. {nova.numero_os} aberta automaticamente!")
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/concluir/<int:id>", methods=["POST"])
+@requer_login
+def concluir_plano_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        base = max(
+            date.today(), parse_data_br(plano.proxima_execucao) or date.today()
+        )
+        proxima = avancar_data(base, plano.frequencia)
+        plano.proxima_execucao = proxima.strftime("%d/%m/%Y")
+        plano.status = "Agendado"
         db.session.commit()
         registrar_auditoria(
             "PCM",
-            "Importação Excel PCM",
-            f"{importados} plano(s) importado(s) de '{arquivo.filename}' ({ignorados} ignorado(s)).",
+            "Ciclo Concluído",
+            f"Plano {plano.maquina} reagendado para {plano.proxima_execucao}",
         )
-        msg = f"{importados} plano(s) preventivo(s) importado(s) com sucesso!"
-        if ignorados:
-            msg += f" ({ignorados} linha(s) sem máquina ou roteiro ignorada(s))."
-        flash(msg)
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao salvar os planos importados no banco de dados.")
+        flash(f"Reagendado para {plano.proxima_execucao}!")
+    return redirect(url_for("central_gestao", tab="pcm"))
 
+
+@app.route("/pcm/editar/<int:id>", methods=["POST"])
+@requer_login
+def editar_plano_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    data_exec = parse_data_br(request.form.get("proxima_execucao", ""))
+    if plano and data_exec:
+        plano.maquina = request.form.get("maquina", "").strip()
+        plano.codigo_maquina = (
+            request.form.get("codigo_maquina", "").strip().upper()
+        )
+        plano.setor = request.form.get("setor", "").strip()
+        plano.frequencia = request.form.get("frequencia", "Mensal")
+        plano.responsavel = request.form.get("responsavel", "").strip()
+        plano.proxima_execucao = data_exec.strftime("%d/%m/%Y")
+        plano.atividade = request.form.get("atividade", "").strip()
+        db.session.commit()
+        flash("Plano atualizado!")
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/excluir/<int:id>", methods=["POST"])
+@requer_login
+def excluir_plano_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        db.session.delete(plano)
+        db.session.commit()
+        flash("Plano removido!")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
@@ -4571,20 +5028,109 @@ def importar_excel_pcm():
 @requer_login
 def excel_pcm():
     planos = PlanoPreventivo.query.all()
+    colunas = [
+        "Máquina",
+        "Tag",
+        "Setor",
+        "Frequência",
+        "Próxima Execução",
+        "Responsável",
+        "Status",
+        "Atividade",
+    ]
     dados = [
         {
             "Máquina": p.maquina,
             "Tag": p.codigo_maquina,
             "Setor": p.setor,
             "Frequência": p.frequencia,
-            "Próxima": p.proxima_execucao,
+            "Próxima Execução": p.proxima_execucao,
             "Responsável": p.responsavel,
             "Status": status_plano(p),
+            "Atividade": p.atividade,
         }
         for p in planos
     ]
-    registrar_auditoria("Relatórios", "Exportação Excel PCM", "Cronograma PCM gerado.")
-    return gerar_excel(pd.DataFrame(dados), "PCM", "pcm", coluna_status="Status")
+    return gerar_excel(
+        pd.DataFrame(dados, columns=colunas),
+        "PCM",
+        "pcm_preventivas",
+        coluna_status="Status",
+    )
+
+
+@app.route("/compras/cadastrar", methods=["POST"])
+@requer_login
+def cadastrar_compras():
+    numero_sc = request.form.get("numero_sc", "").strip() or gerar_numero_sc()
+    solicitante = request.form.get("solicitante", "").strip()
+    objeto = request.form.get("objeto_solicitacao", "").strip()
+    descritivos = request.form.getlist("descritivo_material[]")
+    quantidades = request.form.getlist("quantidade[]")
+    unidades = request.form.getlist("unidade[]")
+    links = request.form.getlist("link_referencia[]")
+
+    itens_validos = []
+    for desc, qtd, unid, lnk in zip(descritivos, quantidades, unidades, links):
+        if desc.strip():
+            itens_validos.append({
+                "descritivo": desc.strip(),
+                "quantidade": max(1, int(qtd) if qtd.isdigit() else 1),
+                "unidade": unid.strip() or "Un",
+                "link_referencia": lnk.strip(),
+            })
+
+    if solicitante and objeto and itens_validos:
+        with sc_lock:
+            dt = parse_data_br(request.form.get("data_solicitacao", ""))
+            nova_sc = SolicitacaoCompra(
+                numero_sc=numero_sc,
+                tipo_sc=request.form.get("tipo_sc", "S.C. Emergencial"),
+                solicitante=solicitante,
+                setor_solicitante=request.form.get(
+                    "setor_solicitante", "Manutenção"
+                ).strip(),
+                responsaveis_duvidas=request.form.get(
+                    "responsaveis_duvidas", ""
+                ).strip(),
+                centro_custo=request.form.get("centro_custo", "").strip(),
+                objeto_solicitacao=objeto,
+                data_solicitacao=(
+                    dt.strftime("%d/%m/%Y")
+                    if dt
+                    else date.today().strftime("%d/%m/%Y")
+                ),
+                status_aprovacao="Aguardando Aprovação",
+            )
+            db.session.add(nova_sc)
+            db.session.flush()
+            for it in itens_validos:
+                db.session.add(
+                    ItemSolicitacaoCompra(solicitacao_id=nova_sc.id, **it)
+                )
+            db.session.commit()
+            registrar_auditoria(
+                "Compras",
+                "Nova S.C.",
+                f"{numero_sc} criada ({len(itens_validos)} itens)",
+            )
+        flash(f"Solicitação {numero_sc} registrada!")
+    return redirect(url_for("central_gestao", tab="compras"))
+
+
+@app.route("/compras/atualizar-status/<int:id>", methods=["POST"])
+@requer_login
+def atualizar_status_sc(id):
+    sc = db.session.get(SolicitacaoCompra, id)
+    novo = request.form.get("status_aprovacao", "").strip()
+    if sc and novo in STATUS_SC_VALIDOS:
+        sc.status_aprovacao = novo
+        db.session.commit()
+        registrar_auditoria(
+            "Compras", "Status S.C.", f"{sc.numero_sc} alterada para {novo}"
+        )
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "erro": "Inválido"}), 400
 
 
 @app.route("/compras/imprimir/<int:id>")
@@ -4593,89 +5139,8 @@ def imprimir_sc(id):
     sc = db.session.get(SolicitacaoCompra, id)
     if not sc:
         flash("S.C. não encontrada.")
-        return redirect(url_for("central_gestao"))
+        return redirect(url_for("central_gestao", tab="compras"))
     return render_template_string(HTML_IMPRESSAO_SC, sc=sc)
-
-
-@app.route("/compras/cadastrar", methods=["POST"])
-@requer_login
-def cadastrar_compras():
-    sol = request.form.get("solicitante", "").strip()
-    obj = request.form.get("objeto_solicitacao", "").strip()
-    descritivos = request.form.getlist("descritivo_material[]")
-    if not sol or not obj or not any(descritivos):
-        flash("Preencha os campos obrigatórios da S.C.")
-        return redirect(url_for("central_gestao"))
-    try:
-        with sc_lock:
-            sc = SolicitacaoCompra(
-                numero_sc=request.form.get("numero_sc", "").strip()
-                or gerar_numero_sc(),
-                tipo_sc=request.form.get("tipo_sc", "S.C. Emergencial"),
-                solicitante=sol,
-                setor_solicitante=request.form.get("setor_solicitante", "").strip(),
-                responsaveis_duvidas=request.form.get(
-                    "responsaveis_duvidas", ""
-                ).strip(),
-                centro_custo=request.form.get("centro_custo", "").strip(),
-                objeto_solicitacao=obj,
-                data_solicitacao=request.form.get("data_solicitacao", "").strip(),
-                status_aprovacao="Aguardando Aprovação",
-            )
-            db.session.add(sc)
-            db.session.flush()
-            for d, q, u, l in zip(
-                descritivos,
-                request.form.getlist("quantidade[]"),
-                request.form.getlist("unidade[]"),
-                request.form.getlist("link_referencia[]"),
-            ):
-                if d.strip():
-                    try:
-                        qtd_int = int(q)
-                    except ValueError:
-                        qtd_int = 1
-                    db.session.add(
-                        ItemSolicitacaoCompra(
-                            solicitacao_id=sc.id,
-                            descritivo=d.strip(),
-                            quantidade=qtd_int,
-                            unidade=u.strip() or "Un",
-                            link_referencia=l.strip(),
-                        )
-                    )
-            db.session.commit()
-            registrar_auditoria(
-                "Compras (S.C.)", "Criação S.C.", f"{sc.numero_sc} — {obj}"
-            )
-        flash(f"Solicitação {sc.numero_sc} cadastrada!")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao registrar S.C.")
-    return redirect(url_for("central_gestao"))
-
-
-@app.route("/compras/atualizar-status/<int:id>", methods=["POST"])
-@requer_login
-def atualizar_status_sc(id):
-    sc = db.session.get(SolicitacaoCompra, id)
-    if not sc:
-        return jsonify({"ok": False, "erro": "S.C. não encontrada."}), 404
-    novo_status = request.form.get("status_aprovacao", "").strip()
-    if novo_status not in STATUS_SC_VALIDOS:
-        return jsonify({"ok": False, "erro": "Status inválido."}), 400
-    try:
-        sc.status_aprovacao = novo_status
-        db.session.commit()
-        registrar_auditoria(
-            "Compras (S.C.)",
-            "Alteração Status S.C.",
-            f"{sc.numero_sc} alterada para {novo_status}",
-        )
-        return jsonify({"ok": True, "status": novo_status})
-    except Exception:
-        db.session.rollback()
-        return jsonify({"ok": False, "erro": "Erro interno."}), 500
 
 
 @app.route("/compras/excluir/<int:id>", methods=["POST"])
@@ -4683,48 +5148,52 @@ def atualizar_status_sc(id):
 def excluir_compras(id):
     sc = db.session.get(SolicitacaoCompra, id)
     if sc:
-        num = sc.numero_sc
         db.session.delete(sc)
         db.session.commit()
-        registrar_auditoria("Compras (S.C.)", "Exclusão S.C.", f"{num} excluída")
         flash("S.C. excluída!")
-    return redirect(url_for("central_gestao"))
+    return redirect(url_for("central_gestao", tab="compras"))
 
 
 @app.route("/compras/excel")
 @requer_login
 def excel_compras():
     compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.asc()).all()
-    dados = []
-    for sc in compras:
-        for it in sc.itens:
-            dados.append({
-                "Código S.C.": sc.numero_sc,
-                "Criticidade": sc.tipo_sc,
-                "Data": sc.data_solicitacao,
-                "Solicitante": sc.solicitante,
-                "Centro Custo": sc.centro_custo,
-                "Objeto": sc.objeto_solicitacao,
-                "Item": it.descritivo,
-                "Qtd": it.quantidade,
-                "Unid.": it.unidade,
-                "Link / Ref": it.link_referencia or "",
-                "Status": sc.status_aprovacao,
-            })
-    registrar_auditoria(
-        "Relatórios", "Exportação Excel Compras", "Planilha de S.C. gerada."
-    )
+    colunas = [
+        "Número S.C.",
+        "Criticidade",
+        "Solicitante",
+        "Centro de Custo",
+        "Objeto",
+        "Descritivo",
+        "Qtd",
+        "Unidade",
+        "Data",
+        "Status",
+    ]
+    dados = [
+        {
+            "Número S.C.": sc.numero_sc,
+            "Criticidade": sc.tipo_sc,
+            "Solicitante": sc.solicitante,
+            "Centro de Custo": sc.centro_custo,
+            "Objeto": sc.objeto_solicitacao,
+            "Descritivo": it.descritivo,
+            "Qtd": it.quantidade,
+            "Unidade": it.unidade,
+            "Data": sc.data_solicitacao,
+            "Status": sc.status_aprovacao,
+        }
+        for sc in compras
+        for it in sc.itens
+    ]
     return gerar_excel(
-        pd.DataFrame(dados),
-        "Solicitacoes Compras",
+        pd.DataFrame(dados, columns=colunas),
+        "Compras",
         "solicitacoes_compras",
-        coluna_status="Status",
+        coluna_status="Criticidade",
     )
 
 
-# ==============================================================================
-# INICIALIZAÇÃO DO SERVIDOR
-# ==============================================================================
 def obter_ip_local():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -4737,14 +5206,13 @@ def obter_ip_local():
 
 
 if __name__ == "__main__":
-    porta = int(os.environ.get("PORT", 5000))
-    ip_local = obter_ip_local()
-    print("=" * 65)
-    print("🚀 CENTRAL DE MANUTENÇÃO — JAMAICA INICIADA")
-    print(f"📍 Local:   http://127.0.0.1:{porta}")
-    print(f"🌐 na Rede: http://{ip_local}:{porta}")
-    print(
-        f"🗄️ Banco:   {'PostgreSQL (Nuvem)' if IS_POSTGRES else 'SQLite Local (' + DB_PATH + ')'}"
-    )
-    print("=" * 65)
-    app.run(host="0.0.0.0", port=porta, debug=False)
+    porta = int(os.environ.get("PORT", "5000"))
+    modo_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    ip_rede = obter_ip_local()
+    print("\n" + "=" * 64)
+    print("  CENTRAL DE MANUTENCAO JAMAICA - SERVIDOR INICIADO")
+    print(f"  Acesso neste PC : http://localhost:{porta}")
+    print(f"  Acesso Celular  : http://{ip_rede}:{porta}")
+    print("=" * 64 + "\n")
+    app.run(host="0.0.0.0", port=porta, debug=modo_debug)
+    
