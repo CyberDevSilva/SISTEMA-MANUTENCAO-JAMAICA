@@ -10,6 +10,7 @@ import json
 from datetime import datetime, date, timedelta
 from io import BytesIO
 from threading import Lock
+from functools import wraps
 
 import pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -167,34 +168,83 @@ TIPOS_SC_VALIDOS = (
 )
 
 JORNADA_REFERENCIA = 9.0
-DUPLAS = [
+FUNCIONARIOS_EQUIPE = [
     {
-        "nome": "Dupla 1",
-        "icone": "🛡️",
-        "mecanico": "Cesar",
-        "eletricista": "Jefferson",
+        "valor": "Cesar",
+        "nome": "Cesar",
+        "funcao": "Mecânico",
+        "icone": "🔧",
+        "equipe": "Equipe Manutenção",
         "turno": "05:00 - 14:00",
-        "rotulo": "Dupla 1 — CESAR & JEFFERSON",
     },
     {
-        "nome": "Dupla 2",
+        "valor": "Jefferson (Eletricista)",
+        "nome": "Jefferson",
+        "funcao": "Eletricista",
         "icone": "⚡",
-        "mecanico": "Erivaldo",
-        "eletricista": "Edivaldo",
-        "turno": "07:00 - 16:00",
-        "rotulo": "Dupla 2 — ERIVALDO & EDIVALDO",
+        "equipe": "Equipe Manutenção",
+        "turno": "05:00 - 14:00",
     },
     {
-        "nome": "Dupla 3",
-        "icone": "⚙️",
-        "mecanico": "Ailton",
-        "eletricista": "Douglas",
+        "valor": "Edivaldo",
+        "nome": "Edivaldo",
+        "funcao": "Eletricista",
+        "icone": "⚡",
+        "equipe": "Equipe Manutenção",
+        "turno": "07:00 - 16:00",
+    },
+    {
+        "valor": "Erivaldo",
+        "nome": "Erivaldo",
+        "funcao": "Mecânico",
+        "icone": "🔧",
+        "equipe": "Equipe Manutenção",
+        "turno": "07:00 - 16:00",
+    },
+    {
+        "valor": "Carlos",
+        "nome": "Carlos",
+        "funcao": "Predial",
+        "icone": "🏢",
+        "equipe": "Manutenção Predial",
+        "turno": "07:00 - 16:00",
+    },
+    {
+        "valor": "Tiago",
+        "nome": "Tiago",
+        "funcao": "Predial",
+        "icone": "🏢",
+        "equipe": "Manutenção Predial",
+        "turno": "07:00 - 16:00",
+    },
+    {
+        "valor": "Ailton",
+        "nome": "Ailton",
+        "funcao": "Mecânico",
+        "icone": "🔧",
+        "equipe": "Equipe Manutenção",
         "turno": "15:30 - 01:04",
-        "rotulo": "Dupla 3 — AILTON & DOUGLAS",
+    },
+    {
+        "valor": "Douglas",
+        "nome": "Douglas",
+        "funcao": "Eletricista",
+        "icone": "⚡",
+        "equipe": "Equipe Manutenção",
+        "turno": "15:30 - 01:04",
+    },
+    {
+        "valor": "Jefferson (Aux. mecânico)",
+        "nome": "Jefferson",
+        "funcao": "Aux. mecânico",
+        "icone": "🔧",
+        "equipe": "Equipe Manutenção",
+        "turno": "15:30 - 01:04",
     },
 ]
-FUNCIONARIOS_VALIDOS = {
-    d[k] for d in DUPLAS for k in ("mecanico", "eletricista")
+
+FUNCIONARIOS_VALIDOS = {f["valor"] for f in FUNCIONARIOS_EQUIPE} | {
+    f["nome"] for f in FUNCIONARIOS_EQUIPE
 }
 
 FREQUENCIA_PCM = {
@@ -338,6 +388,22 @@ class OrdemServico(db.Model):
     @property
     def evidencias_lista(self):
         return listar_evidencias_ordem(self)
+
+
+class EvidenciaOS(db.Model):
+    __tablename__ = "evidencias_os"
+    id = db.Column(db.Integer, primary_key=True)
+    ordem_id = db.Column(
+        db.Integer,
+        db.ForeignKey("ordens_servico.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    nome_arquivo = db.Column(db.String(220), unique=True, nullable=False, index=True)
+    nome_original = db.Column(db.String(220), default="")
+    mime_type = db.Column(db.String(80), default="image/jpeg")
+    dados_binarios = db.Column(db.LargeBinary, nullable=False)
+    criado_em = db.Column(db.String(50), default="")
 
 
 class ItemEstoque(db.Model):
@@ -487,6 +553,40 @@ def backup_automatico_diario():
             pass
 
 
+def sincronizar_evidencias_disco_com_banco():
+    """Garante que fotos já existentes no disco sejam copiadas para o banco."""
+    try:
+        os.makedirs(EVIDENCIAS_DIR, exist_ok=True)
+        for nome_arq in os.listdir(EVIDENCIAS_DIR):
+            nome_limpo = os.path.basename(nome_arq)
+            ext = os.path.splitext(nome_limpo)[1].lower()
+            if ext not in EXTENSOES_EVIDENCIA:
+                continue
+            caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
+            if not os.path.isfile(caminho):
+                continue
+            if not EvidenciaOS.query.filter_by(nome_arquivo=nome_limpo).first():
+                with open(caminho, "rb") as f:
+                    dados = f.read()
+                if dados:
+                    ordem_match = OrdemServico.query.filter(
+                        OrdemServico.evidencia_imagem.contains(nome_limpo)
+                    ).first()
+                    db.session.add(
+                        EvidenciaOS(
+                            ordem_id=ordem_match.id if ordem_match else None,
+                            nome_arquivo=nome_limpo,
+                            nome_original=nome_limpo,
+                            mime_type=EXTENSOES_EVIDENCIA[ext],
+                            dados_binarios=dados,
+                            criado_em=agora_formatado(),
+                        )
+                    )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 def inicializar_banco():
     db.create_all()
     try:
@@ -537,6 +637,7 @@ def inicializar_banco():
         db.session.commit()
     except Exception:
         db.session.rollback()
+    sincronizar_evidencias_disco_com_banco()
     backup_automatico_diario()
 
 
@@ -572,7 +673,7 @@ def manifest_pwa():
 @app.route("/sw.js")
 def service_worker():
     sw_code = """
-    const CACHE_NAME = 'manutencao-jamaica-v4';
+    const CACHE_NAME = 'manutencao-jamaica-v6';
     self.addEventListener('install', event => {
         self.skipWaiting();
     });
@@ -646,7 +747,7 @@ def gravar_evidencias_ordem(ordem, lista_itens):
     )
 
 
-def salvar_evidencia_os(arquivo, numero_os):
+def salvar_evidencia_os(arquivo, numero_os, ordem_id=None):
     if not arquivo or not arquivo.filename:
         return "", "", None
 
@@ -682,10 +783,21 @@ def salvar_evidencia_os(arquivo, numero_os):
     with open(destino, "wb") as f:
         f.write(conteudo)
 
+    db.session.add(
+        EvidenciaOS(
+            ordem_id=ordem_id,
+            nome_arquivo=nome_seguro,
+            nome_original=nome_orig[:200],
+            mime_type=EXTENSOES_EVIDENCIA[ext],
+            dados_binarios=conteudo,
+            criado_em=agora_formatado(),
+        )
+    )
+
     return nome_seguro, nome_orig[:200], None
 
 
-def salvar_multiplas_evidencias_os(arquivos, numero_os, existentes=0):
+def salvar_multiplas_evidencias_os(arquivos, numero_os, existentes=0, ordem_id=None):
     validos = [a for a in (arquivos or []) if a and (a.filename or "").strip()]
     if not validos:
         return [], None
@@ -698,7 +810,9 @@ def salvar_multiplas_evidencias_os(arquivos, numero_os, existentes=0):
 
     salvos = []
     for arq in validos:
-        nome_seguro, nome_orig, erro = salvar_evidencia_os(arq, numero_os)
+        nome_seguro, nome_orig, erro = salvar_evidencia_os(
+            arq, numero_os, ordem_id=ordem_id
+        )
         if erro:
             for item in salvos:
                 remover_evidencia_os(item["arquivo"])
@@ -716,6 +830,11 @@ def remover_evidencia_os(nome_arquivo):
         return
     for item in _decodificar_campo_evidencia(nome_arquivo):
         nome_limpo = os.path.basename(item)
+        try:
+            EvidenciaOS.query.filter_by(nome_arquivo=nome_limpo).delete()
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
         if os.path.exists(caminho):
             try:
@@ -810,8 +929,7 @@ def formatar_duracao_indicador(horas_float):
 
 
 def normalizar_chave_maquina(nome):
-    texto = re.sub(r"\s+", " ", str(nome or "").strip()).lower()
-    return texto
+    return re.sub(r"\s+", " ", str(nome or "").strip()).lower()
 
 
 def token_csrf():
@@ -1575,6 +1693,7 @@ tr.sem-resultado { display: none; }
 .tipo-badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
 .tipo-preventiva { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
 .tipo-corretiva { background: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.3); }
+.tipo-predial { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
 
 .sc-badge-emergencial, .sc-badge-programada, .sc-badge-reposicao {
     display: inline-block; padding: 5px 11px; border-radius: 99px;
@@ -1711,7 +1830,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 @keyframes slideInRight { from { opacity: 0; transform: translateX(35px); } to { opacity: 1; transform: translateX(0); } }
 
 /* ============================================================================
-   RESPONSIVIDADE MOBILE (CARDS LIMPOS, BOTÕES AMPLOS E BARRA INFERIOR)
+   RESPONSIVIDADE MOBILE
    ============================================================================ */
 @media (max-width: 860px) {
     body {
@@ -1890,7 +2009,6 @@ window.addEventListener('load', () => {
     }
 });
 
-let deferredPrompt;
 window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     window.deferredPrompt = e;
@@ -2296,7 +2414,9 @@ if(modalEditarOS){
                 .map(s => s.trim())
                 .filter(Boolean);
             $$('input[name="funcionarios"]', formEditarOS).forEach(cb => {
-                cb.checked = selecionados.includes(cb.value);
+                cb.checked = selecionados.includes(cb.value) || (
+                    selecionados.includes('Jefferson') && cb.value.startsWith('Jefferson')
+                );
             });
 
             modalEditarOS.classList.add('aberto');
@@ -2819,9 +2939,8 @@ HTML_OS = r"""
                 <div class="campo completo">
                     <label>Funcionários Envolvidos</label>
                     <div class="checkbox-grid">
-                        {% for d in duplas %}
-                        <label><input type="checkbox" name="funcionarios" value="{{d.mecanico}}"> {{d.mecanico}} (Mecânico)</label>
-                        <label><input type="checkbox" name="funcionarios" value="{{d.eletricista}}"> {{d.eletricista}} (Eletricista)</label>
+                        {% for f in funcionarios_equipe %}
+                        <label><input type="checkbox" name="funcionarios" value="{{f.valor}}"> {{f.icone}} {{f.nome}} ({{f.funcao}} • {{f.turno}})</label>
                         {% endfor %}
                     </div>
                 </div>
@@ -2854,9 +2973,8 @@ HTML_OS = r"""
             <div class="campo">
                 <label>Funcionários Envolvidos *</label>
                 <div class="checkbox-grid">
-                    {% for d in duplas %}
-                    <label><input type="checkbox" name="funcionarios" value="{{d.mecanico}}"> {{d.mecanico}} (Mecânico)</label>
-                    <label><input type="checkbox" name="funcionarios" value="{{d.eletricista}}"> {{d.eletricista}} (Eletricista)</label>
+                    {% for f in funcionarios_equipe %}
+                    <label><input type="checkbox" name="funcionarios" value="{{f.valor}}"> {{f.icone}} {{f.nome}} ({{f.funcao}} • {{f.turno}})</label>
                     {% endfor %}
                 </div>
             </div>
@@ -3586,20 +3704,30 @@ HTML_CENTRAL_GESTAO = r"""
 
     <section class="card">
         <h2>👷 Eficiência Individual dos Funcionários</h2>
-        <form method="GET" style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
-            <input type="hidden" name="tab" value="indicadores">
-            <label for="mes" style="margin:0;color:var(--mt)">Período:</label>
-            <select name="mes" id="mes" style="width:auto" onchange="this.form.submit()">
-                <option value="geral" {{ 'selected' if mes_sel=='geral' else '' }}>📅 Todo o período</option>
-                {% for m in meses %}<option value="{{m.chave}}" {{ 'selected' if m.chave==mes_sel else '' }}>{{m.nome}}</option>{% endfor %}
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+            <form method="GET" style="display:flex;gap:8px;align-items:center;margin:0">
+                <input type="hidden" name="tab" value="indicadores">
+                <label for="mes" style="margin:0;color:var(--mt)">Período:</label>
+                <select name="mes" id="mes" style="width:auto" onchange="this.form.submit()">
+                    <option value="geral" {{ 'selected' if mes_sel=='geral' else '' }}>📅 Todo o período</option>
+                    {% for m in meses %}<option value="{{m.chave}}" {{ 'selected' if m.chave==mes_sel else '' }}>{{m.nome}}</option>{% endfor %}
+                </select>
+            </form>
+            <select id="filtroFuncaoEquipe" style="width:auto">
+                <option value="">Todas as funções ({{funcionarios_indiv|length}})</option>
+                <option value="mecanica">🔧 Mecânica & Auxiliar</option>
+                <option value="eletrica">⚡ Elétrica</option>
+                <option value="predial">🏢 Predial</option>
             </select>
-        </form>
-        <div class="grid-triplo">
+        </div>
+        <div class="grid-triplo" id="gridFuncionarios">
         {% for f in funcionarios_indiv %}
-            <div style="background:#0c0e12;border:1px solid var(--bd);border-radius:12px;padding:16px">
+            {% set cat_func = 'eletrica' if f.funcao == 'Eletricista' else ('predial' if f.funcao == 'Predial' else 'mecanica') %}
+            {% set badge_cls = 'tipo-preventiva' if f.funcao == 'Eletricista' else ('tipo-predial' if f.funcao == 'Predial' else 'tipo-corretiva') %}
+            <div class="card-funcionario" data-cat="{{cat_func}}" style="background:#0c0e12;border:1px solid var(--bd);border-radius:12px;padding:16px">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
                     <h3 style="margin:0;color:var(--or2);font-size:16px">{{f.icone}} {{f.nome}}</h3>
-                    <span class="tipo-badge {{ 'tipo-preventiva' if f.funcao=='Eletricista' else 'tipo-corretiva' }}">{{f.funcao}}</span>
+                    <span class="tipo-badge {{badge_cls}}">{{f.funcao}}</span>
                 </div>
                 <p style="margin:3px 0;font-size:12px;color:var(--mt)"><strong>Equipe:</strong> {{f.equipe}} • <strong>Turno:</strong> {{f.turno}}</p>
                 <p style="margin:6px 0;font-size:13px">Apontado: <strong style="color:var(--or2)">{{ f.tempo_str }}</strong> ({{ f.qtd_os }} O.S. • {{ f.dias }} dia(s))</p>
@@ -3751,6 +3879,13 @@ document.addEventListener("DOMContentLoaded", function() {
         chartInstance.update();
     });
 
+    document.getElementById('filtroFuncaoEquipe')?.addEventListener('change', function() {
+        const cat = this.value;
+        document.querySelectorAll('#gridFuncionarios .card-funcionario').forEach(card => {
+            card.style.display = (!cat || card.dataset.cat === cat) ? '' : 'none';
+        });
+    });
+
     document.getElementById('selectMaquinaMTBF')?.addEventListener('change', function() {
         const val = this.value;
         const elMtbf = document.getElementById('valorMTBF');
@@ -3833,8 +3968,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get('tab');
-    if(tabParam && $('[data-alvo="secao-'+tabParam+'"]')) {
-        $('[data-alvo="secao-'+tabParam+'"]').click();
+    if(tabParam && document.querySelector('[data-alvo="secao-'+tabParam+'"]')) {
+        document.querySelector('[data-alvo="secao-'+tabParam+'"]').click();
     }
 });
 </script>
@@ -3855,7 +3990,6 @@ body { font-family: Arial, sans-serif; color: #111; margin: 0; padding: 0; font-
 table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
 td, th { border: 1px solid #333; padding: 6px 8px; text-align: left; vertical-align: top; }
 th { background: #f0f0f0; font-size: 11px; font-weight: bold; width: 22%; }
-.area { min-height: 55px; white-space: pre-wrap; }
 .area-grande { min-height: 75px; white-space: pre-wrap; }
 .secao-titulo { font-weight: bold; font-size: 12px; background: #e5e7eb; padding: 5px 8px; border: 1px solid #333; margin-bottom: -1px; }
 .evidencia-print-grid { border: 1px solid #333; padding: 8px; margin-bottom: 10px; background: #fafafa; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
@@ -4027,8 +4161,6 @@ document.querySelectorAll('.qr-box').forEach(el => {
 # DECORATOR DE AUTENTICAÇÃO CENTRALIZADA
 # ==============================================================================
 def requer_login(f):
-    from functools import wraps
-
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get("logado_sistema"):
@@ -4119,11 +4251,21 @@ def ver_evidencia_os(filename):
     if ext not in EXTENSOES_EVIDENCIA:
         return "Arquivo inválido", 400
     caminho = os.path.join(EVIDENCIAS_DIR, nome_limpo)
-    if not os.path.isfile(caminho):
-        return "Evidência não encontrada", 404
-    return send_from_directory(
-        EVIDENCIAS_DIR, nome_limpo, mimetype=EXTENSOES_EVIDENCIA[ext]
-    )
+    if os.path.isfile(caminho):
+        return send_from_directory(
+            EVIDENCIAS_DIR, nome_limpo, mimetype=EXTENSOES_EVIDENCIA[ext]
+        )
+    ev_db = EvidenciaOS.query.filter_by(nome_arquivo=nome_limpo).first()
+    if ev_db and ev_db.dados_binarios:
+        try:
+            os.makedirs(EVIDENCIAS_DIR, exist_ok=True)
+            with open(caminho, "wb") as f:
+                f.write(ev_db.dados_binarios)
+        except OSError:
+            pass
+        mime = ev_db.mime_type or EXTENSOES_EVIDENCIA[ext]
+        return Response(ev_db.dados_binarios, mimetype=mime)
+    return "Evidência não encontrada", 404
 
 
 @app.route("/os/evidencia-atualizar/<int:id>", methods=["POST"])
@@ -4136,9 +4278,13 @@ def atualizar_evidencia_os(id):
     existentes = listar_evidencias_ordem(ordem)
     arquivos = request.files.getlist("evidencia_foto")
     novos, erro_ev = salvar_multiplas_evidencias_os(
-        arquivos, ordem.numero_os, existentes=len(existentes)
+        arquivos,
+        ordem.numero_os,
+        existentes=len(existentes),
+        ordem_id=ordem.id,
     )
     if erro_ev:
+        db.session.rollback()
         flash(erro_ev)
         return redirect(url_for("dashboard"))
     if not novos:
@@ -4206,330 +4352,72 @@ def remover_evidencia_rota(id):
         flash("Ordem de Serviço não encontrada.")
         return redirect(url_for("dashboard"))
 
-    try:
-        ev_antiga = ordem.evidencia_imagem
-        gravar_evidencias_ordem(ordem, [])
-        db.session.commit()
-        remover_evidencia_os(ev_antiga)
-        registrar_auditoria(
-            "Ordens de Serviço",
-            "Evidências O.S. Removidas",
-            f"Todas as fotos de evidência foram removidas da O.S. {ordem.numero_os}",
-        )
-        flash(f"Todas as evidências da O.S. {ordem.numero_os} foram removidas.")
-    except Exception:
-        db.session.rollback()
-        flash("Erro ao remover evidências.")
+    existentes = listar_evidencias_ordem(ordem)
+    if existentes:
+        try:
+            gravar_evidencias_ordem(ordem, [])
+            db.session.commit()
+            for item in existentes:
+                remover_evidencia_os(item["arquivo"])
+            registrar_auditoria(
+                "Ordens de Serviço",
+                "Evidências O.S. Removidas",
+                f"Todas as {len(existentes)} foto(s) removidas da O.S. {ordem.numero_os}",
+            )
+            flash(f"Fotos de evidência removidas da O.S. {ordem.numero_os}.")
+        except Exception:
+            db.session.rollback()
+            flash("Erro ao remover evidências.")
     return redirect(url_for("dashboard"))
 
 
 @app.route("/api/os/novas")
-def api_os_novas():
+def api_novas_os():
     try:
-        ultimo_id = max(0, int(request.args.get("ultimo_id", "0")))
-    except ValueError:
+        ultimo_id = int(request.args.get("ultimo_id", 0))
+    except (ValueError, TypeError):
         ultimo_id = 0
+
+    max_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    if ultimo_id <= 0:
+        return jsonify({"ultimo_id": max_id, "ordens": []})
 
     novas = (
         OrdemServico.query.filter(OrdemServico.id > ultimo_id)
         .order_by(OrdemServico.id.asc())
-        .limit(20)
+        .limit(10)
         .all()
     )
-    ultimo_no_banco = (
-        db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
-    )
-    return jsonify({
-        "ultimo_id": ultimo_no_banco,
-        "ordens": [
-            {
-                "id": o.id,
-                "numero_os": o.numero_os,
-                "solicitante": o.solicitante,
-                "setor": o.setor or "",
-                "titulo": o.titulo or "",
-                "prioridade": o.prioridade or "Média",
-                "responsavel": o.responsavel or "",
-                "abertura": o.abertura or "",
-                "status": o.status or "Aberta",
-            }
-            for o in novas
-        ],
-    })
-
-
-@app.route("/governanca/backup")
-@requer_login
-def baixar_backup_db():
-    if IS_POSTGRES or not os.path.exists(DB_PATH):
-        flash("Backup direto em .db disponível apenas no modo SQLite local.")
-        return redirect(url_for("central_gestao", tab="governanca"))
-    db.session.commit()
-    registrar_auditoria(
-        "Governança", "Download Backup DB", "Cópia completa os.db exportada."
-    )
-    nome = f"backup_manutencao_jamaica_{datetime.now():%Y%m%d_%H%M%S}.db"
-    return send_file(DB_PATH, as_attachment=True, download_name=nome)
-
-
-@app.route("/governanca/exportar-json")
-@requer_login
-def exportar_backup_json():
-    pacote = serializar_banco_completo()
-    conteudo = json.dumps(pacote, ensure_ascii=False, indent=2).encode("utf-8")
-    memoria = BytesIO(conteudo)
-    memoria.seek(0)
-    registrar_auditoria(
-        "Governança",
-        "Exportação Backup JSON",
-        "Cópia integral do banco de dados exportada em JSON.",
-    )
-    nome = f"backup_completo_jamaica_{datetime.now():%Y%m%d_%H%M%S}.json"
-    return send_file(
-        memoria,
-        as_attachment=True,
-        download_name=nome,
-        mimetype="application/json",
-    )
-
-
-@app.route("/governanca/exportar-excel-completo")
-@requer_login
-def exportar_backup_excel_completo():
-    ordens = OrdemServico.query.order_by(OrdemServico.id.asc()).all()
-    df_os = pd.DataFrame(
-        [
-            {
-                "OS": o.numero_os,
-                "Solicitante": o.solicitante,
-                "Máquina / Setor": o.setor or "",
-                "Causa": o.titulo or "",
-                "Laudo Técnico": o.observacao_tecnica or "",
-                "Qtd Evidências": len(listar_evidencias_ordem(o)),
-                "Arquivos Evidência": ", ".join(
-                    e["nome"] for e in listar_evidencias_ordem(o)
-                ),
-                "Prioridade": o.prioridade,
-                "Responsável": o.responsavel or "",
-                "Tipo": o.tipo_manutencao or "",
-                "Executantes": o.funcionarios or "",
-                "Horas": o.horas_trabalhadas or 0.0,
-                "Status": o.status,
-                "Abertura": o.abertura,
-                "Finalização": o.finalizacao or "",
-                "Lead Time": o.tempo_total or "",
-            }
-            for o in ordens
-        ],
-        columns=[
-            "OS",
-            "Solicitante",
-            "Máquina / Setor",
-            "Causa",
-            "Laudo Técnico",
-            "Qtd Evidências",
-            "Arquivos Evidência",
-            "Prioridade",
-            "Responsável",
-            "Tipo",
-            "Executantes",
-            "Horas",
-            "Status",
-            "Abertura",
-            "Finalização",
-            "Lead Time",
-        ],
-    )
-
-    pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
-    df_est = pd.DataFrame(
-        [
-            {
-                "Código": p.codigo,
-                "Peça": p.nome,
-                "Categoria": p.categoria,
-                "Localização": p.localizacao,
-                "Saldo": p.quantidade,
-                "Mínimo": p.estoque_minimo,
-                "Status": (
-                    "Baixo Estoque"
-                    if p.quantidade <= p.estoque_minimo
-                    else "Normal"
-                ),
-                "Última Atualização": p.ultima_atualizacao,
-            }
-            for p in pecas
-        ],
-        columns=[
-            "Código",
-            "Peça",
-            "Categoria",
-            "Localização",
-            "Saldo",
-            "Mínimo",
-            "Status",
-            "Última Atualização",
-        ],
-    )
-
-    movs = HistoricoMovimentacao.query.order_by(
-        HistoricoMovimentacao.id.desc()
-    ).all()
-    df_mov = pd.DataFrame(
-        [
-            {
-                "Data / Hora": m.data_hora,
-                "Tipo": m.tipo,
-                "Código": m.peca_codigo,
-                "Peça": m.peca_nome,
-                "Quantidade": m.quantidade,
-                "Solicitante / Origem": m.solicitante,
-            }
-            for m in movs
-        ],
-        columns=[
-            "Data / Hora",
-            "Tipo",
-            "Código",
-            "Peça",
-            "Quantidade",
-            "Solicitante / Origem",
-        ],
-    )
-
-    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
-    rows_spare = []
-    for m in maquinas:
-        if m.pecas:
-            for ps in m.pecas:
-                rows_spare.append({
-                    "Máquina": m.maquina,
-                    "Modelo": m.modelo,
-                    "Setor": m.setor,
-                    "Notas Ativo": m.pecas_necessarias,
-                    "Peça Mapeada": ps.nome_peca,
-                    "Código Peça": ps.codigo_peca,
-                    "Qtd": ps.quantidade,
-                    "Obs Peça": ps.observacao,
-                })
-        else:
-            rows_spare.append({
-                "Máquina": m.maquina,
-                "Modelo": m.modelo,
-                "Setor": m.setor,
-                "Notas Ativo": m.pecas_necessarias,
-                "Peça Mapeada": "",
-                "Código Peça": "",
-                "Qtd": 0,
-                "Obs Peça": "",
-            })
-    df_spare = pd.DataFrame(
-        rows_spare,
-        columns=[
-            "Máquina",
-            "Modelo",
-            "Setor",
-            "Notas Ativo",
-            "Peça Mapeada",
-            "Código Peça",
-            "Qtd",
-            "Obs Peça",
-        ],
-    )
-
-    planos = PlanoPreventivo.query.order_by(PlanoPreventivo.id.asc()).all()
-    df_pcm = pd.DataFrame(
-        [
-            {
-                "Máquina": p.maquina,
-                "Tag": p.codigo_maquina,
-                "Setor": p.setor,
-                "Frequência": p.frequencia,
-                "Próxima Execução": p.proxima_execucao,
-                "Responsável": p.responsavel,
-                "Status": status_plano(p),
-                "Atividade": p.atividade,
-            }
-            for p in planos
-        ],
-        columns=[
-            "Máquina",
-            "Tag",
-            "Setor",
-            "Frequência",
-            "Próxima Execução",
-            "Responsável",
-            "Status",
-            "Atividade",
-        ],
-    )
-
-    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.asc()).all()
-    rows_sc = []
-    for sc in compras:
-        for it in sc.itens:
-            rows_sc.append({
-                "Código S.C.": sc.numero_sc,
-                "Criticidade": sc.tipo_sc,
-                "Data": sc.data_solicitacao,
-                "Solicitante": sc.solicitante,
-                "Setor": sc.setor_solicitante,
-                "Centro Custo": sc.centro_custo,
-                "Objeto": sc.objeto_solicitacao,
-                "Status": sc.status_aprovacao,
-                "Item": it.descritivo,
-                "Qtd": it.quantidade,
-                "Unidade": it.unidade,
-                "Referência / Link": it.link_referencia,
-            })
-    df_sc = pd.DataFrame(
-        rows_sc,
-        columns=[
-            "Código S.C.",
-            "Criticidade",
-            "Data",
-            "Solicitante",
-            "Setor",
-            "Centro Custo",
-            "Objeto",
-            "Status",
-            "Item",
-            "Qtd",
-            "Unidade",
-            "Referência / Link",
-        ],
-    )
-
-    registrar_auditoria(
-        "Governança",
-        "Exportação Excel Geral",
-        "Planilha consolidada multi-abas exportada.",
-    )
-    return gerar_excel_multiplas_abas(
-        [
-            ("Ordens_Servico", df_os, "Status"),
-            ("Estoque", df_est, "Status"),
-            ("Movimentacoes", df_mov, None),
-            ("Spare_Parts", df_spare, None),
-            ("PCM", df_pcm, "Status"),
-            ("Compras_SC", df_sc, "Status"),
-        ],
-        "backup_geral_jamaica",
-    )
+    lista = [
+        {
+            "id": o.id,
+            "numero_os": o.numero_os,
+            "solicitante": o.solicitante,
+            "setor": o.setor or "",
+            "titulo": o.titulo or "",
+            "prioridade": o.prioridade or "Média",
+            "responsavel": o.responsavel or "",
+            "abertura": o.abertura,
+            "status": o.status,
+        }
+        for o in novas
+    ]
+    return jsonify({"ultimo_id": max_id, "ordens": lista})
 
 
 # ==============================================================================
-# ROTAS LOBBY, ORDENS DE SERVIÇO E CENTRAL DE GESTÃO UNIFICADA
+# ROTAS LOBBY E ORDENS DE SERVIÇO (CHÃO DE FÁBRICA)
 # ==============================================================================
 @app.route("/")
 def lobby():
     ordens = OrdemServico.query.all()
+    total = len(ordens)
     abertas = sum(1 for o in ordens if o.status == "Aberta")
     aguardando = sum(1 for o in ordens if o.status == "Aguardando Peça")
-    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    ultimo_os_id = max((o.id for o in ordens), default=0)
     return renderizar(
         HTML_LOBBY,
-        total=len(ordens),
+        total=total,
         abertas=abertas,
         aguardando=aguardando,
         proxima=gerar_numero_os(),
@@ -4546,13 +4434,17 @@ def dashboard():
     abertas = sum(1 for o in ordens if o.status == "Aberta")
     aguardando = sum(1 for o in ordens if o.status == "Aguardando Peça")
     finalizadas = sum(1 for o in ordens if o.status == "Finalizada")
-    pct_final = round((finalizadas / total) * 100) if total else 0
-    pecas_estoque = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
-    maquinas_cad = [
-        m.maquina
-        for m in MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
-    ]
-    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
+    pct_final = round(finalizadas / total * 100) if total else 0
+    ultimo_os_id = max((o.id for o in ordens), default=0)
+
+    pecas_estoque = (
+        ItemEstoque.query.filter(ItemEstoque.quantidade > 0)
+        .order_by(ItemEstoque.nome.asc())
+        .all()
+    )
+    maquinas_spare = [m.maquina for m in MaquinaSpare.query.all()]
+    maquinas_os = [o.setor for o in ordens if o.setor]
+    maquinas_sugeridas = sorted(list(set(maquinas_spare + maquinas_os)))
 
     return renderizar(
         HTML_OS,
@@ -4565,12 +4457,11 @@ def dashboard():
         proxima=gerar_numero_os(),
         busca=busca,
         prefill_setor=prefill_setor,
-        maquinas_sugeridas=maquinas_cad,
-        duplas=DUPLAS,
+        maquinas_sugeridas=maquinas_sugeridas,
         pecas_estoque=pecas_estoque,
+        funcionarios_equipe=FUNCIONARIOS_EQUIPE,
         fmt_hhmm=horas_decimais_para_hhmm,
         fmt_input_time=horas_decimais_para_input_time,
-        max_fotos_os=MAX_FOTOS_EVIDENCIA_POR_OS,
         ultimo_os_id=ultimo_os_id,
     )
 
@@ -4578,43 +4469,43 @@ def dashboard():
 @app.route("/criar", methods=["POST"])
 def criar():
     solicitante = request.form.get("solicitante", "").strip()
-    setor = request.form.get("setor", "").strip()
-    titulo = request.form.get("titulo", "").strip()
-    prioridade = request.form.get("prioridade", "Média").strip()
-    responsavel = request.form.get("responsavel", "").strip()
-
     if not solicitante:
-        flash("O campo Solicitante é obrigatório.")
+        flash("Preencha o nome do solicitante.")
         return redirect(url_for("dashboard"))
+
+    prioridade = request.form.get("prioridade", "Média")
     if prioridade not in PRIORIDADES_VALIDAS:
         prioridade = "Média"
 
     with os_lock:
-        numero = gerar_numero_os()
-        nova = OrdemServico(
-            numero_os=numero,
-            solicitante=solicitante,
-            setor=setor,
-            titulo=titulo,
-            descricao="",
-            prioridade=prioridade,
-            responsavel=responsavel,
-            abertura=agora_formatado(),
-            status="Aberta",
-        )
-        db.session.add(nova)
-        db.session.commit()
-
-    registrar_auditoria(
-        "Ordens de Serviço",
-        "Criação O.S.",
-        f"O.S. {numero} aberta por {solicitante}",
-    )
-    flash(f"Ordem de Serviço {numero} aberta com sucesso!")
+        try:
+            numero_os = gerar_numero_os()
+            nova = OrdemServico(
+                numero_os=numero_os,
+                solicitante=solicitante[:100],
+                setor=request.form.get("setor", "").strip()[:100],
+                titulo=request.form.get("titulo", "").strip()[:200],
+                descricao="",
+                prioridade=prioridade,
+                responsavel=request.form.get("responsavel", "").strip()[:100],
+                abertura=agora_formatado(),
+                status="Aberta",
+            )
+            db.session.add(nova)
+            db.session.commit()
+            registrar_auditoria(
+                "Ordens de Serviço",
+                "Abertura O.S.",
+                f"O.S. {numero_os} aberta por {solicitante}",
+            )
+            flash(f"Ordem de Serviço {numero_os} registrada com sucesso.")
+        except Exception:
+            db.session.rollback()
+            flash("Erro ao registrar a Ordem de Serviço. Tente novamente.")
     return redirect(url_for("dashboard"))
 
 
-@app.route("/os/editar/<int:id>", methods=["POST"])
+@app.route("/editar-os/<int:id>", methods=["POST"])
 def editar_os(id):
     ordem = db.session.get(OrdemServico, id)
     if not ordem:
@@ -4626,61 +4517,89 @@ def editar_os(id):
         flash("O campo Solicitante é obrigatório.")
         return redirect(url_for("dashboard"))
 
-    setor = request.form.get("setor", "").strip()
-    titulo = request.form.get("titulo", "").strip()
-    responsavel = request.form.get("responsavel", "").strip()
-    prioridade = request.form.get("prioridade", "Média").strip()
+    prioridade = request.form.get("prioridade", "Média")
     if prioridade not in PRIORIDADES_VALIDAS:
         prioridade = "Média"
 
-    novo_status = request.form.get("status", ordem.status).strip()
-    if novo_status not in STATUS_OS_VALIDOS:
-        novo_status = ordem.status
+    status = request.form.get("status", "Aberta")
+    if status not in STATUS_OS_VALIDOS:
+        status = ordem.status
 
     tipo_manutencao = request.form.get("tipo_manutencao", "").strip()
     if tipo_manutencao not in TIPOS_MANUTENCAO:
         tipo_manutencao = ""
 
-    tempo_trabalhado = request.form.get("tempo_trabalhado", "").strip()
-    horas_dec = tempo_hhmm_para_horas_decimais(tempo_trabalhado)
-    funcionarios_lista = [
-        f.strip()
+    funcs_selecionados = [
+        f
         for f in request.form.getlist("funcionarios")
-        if f.strip() in FUNCIONARIOS_VALIDOS
+        if f in FUNCIONARIOS_VALIDOS
     ]
-    observacao_tecnica = request.form.get("observacao_tecnica", "").strip()
+    tempo_str = request.form.get("tempo_trabalhado", "").strip()
+    horas_decimais = (
+        tempo_hhmm_para_horas_decimais(tempo_str)
+        if tempo_str
+        else (ordem.horas_trabalhadas or 0.0)
+    )
 
-    ordem.solicitante = solicitante
-    ordem.setor = setor
-    ordem.titulo = titulo
-    ordem.responsavel = responsavel
-    ordem.prioridade = prioridade
+    try:
+        ordem.solicitante = solicitante[:100]
+        ordem.setor = request.form.get("setor", "").strip()[:100]
+        ordem.titulo = request.form.get("titulo", "").strip()[:200]
+        ordem.responsavel = request.form.get("responsavel", "").strip()[:100]
+        ordem.prioridade = prioridade
+        ordem.status = status
+        ordem.tipo_manutencao = tipo_manutencao
+        ordem.funcionarios = ", ".join(funcs_selecionados)
+        ordem.horas_trabalhadas = horas_decimais
+        ordem.observacao_tecnica = request.form.get(
+            "observacao_tecnica", ""
+        ).strip()[:2000]
+
+        if status == "Finalizada":
+            if not ordem.finalizacao:
+                ordem.finalizacao = agora_formatado()
+            ordem.tempo_total = calcular_tempo_total(
+                ordem.abertura, ordem.finalizacao
+            )
+            ordem.motivo_pausa = ""
+        else:
+            ordem.finalizacao = ""
+            ordem.tempo_total = ""
+
+        db.session.commit()
+        registrar_auditoria(
+            "Ordens de Serviço",
+            "Edição O.S.",
+            f"O.S. {ordem.numero_os} editada",
+        )
+        flash(f"Ordem de Serviço {ordem.numero_os} atualizada com sucesso.")
+    except Exception:
+        db.session.rollback()
+        flash("Erro ao salvar alterações na Ordem de Serviço.")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/pausar/<int:id>", methods=["POST"])
+def pausar_os(id):
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem or ordem.status == "Finalizada":
+        flash("Operação inválida para esta O.S.")
+        return redirect(url_for("dashboard"))
+
+    novo_status = request.form.get("novo_status", "Aguardando Peça")
+    if novo_status not in ("Aguardando Peça", "Aberta"):
+        novo_status = "Aguardando Peça"
+    motivo = request.form.get("motivo_pausa", "").strip()[:200]
+
     ordem.status = novo_status
-    ordem.tipo_manutencao = tipo_manutencao
-    ordem.horas_trabalhadas = horas_dec
-    ordem.funcionarios = ", ".join(funcionarios_lista)
-    ordem.observacao_tecnica = observacao_tecnica
-
-    if novo_status == "Finalizada" and not ordem.finalizacao:
-        ordem.finalizacao = agora_formatado()
-        if not ordem.tempo_total:
-            try:
-                ordem.tempo_total = calcular_tempo_total(
-                    ordem.abertura, ordem.finalizacao
-                )
-            except Exception:
-                pass
-    elif novo_status != "Finalizada":
-        ordem.finalizacao = ""
-        ordem.tempo_total = ""
-
+    ordem.motivo_pausa = motivo if novo_status == "Aguardando Peça" else ""
     db.session.commit()
     registrar_auditoria(
         "Ordens de Serviço",
-        "Edição O.S.",
-        f"O.S. {ordem.numero_os} editada (Status: {ordem.status}).",
+        "Status O.S.",
+        f"O.S. {ordem.numero_os} alterada para {novo_status}",
     )
-    flash(f"O.S. {ordem.numero_os} atualizada com sucesso!")
+    flash(f"Status da O.S. {ordem.numero_os} atualizado para {novo_status}.")
     return redirect(url_for("dashboard"))
 
 
@@ -4693,132 +4612,101 @@ def finalizar(id):
 
     tipo_manutencao = request.form.get("tipo_manutencao", "").strip()
     if tipo_manutencao not in TIPOS_MANUTENCAO:
-        flash("Selecione o tipo de manutenção (Preventiva ou Corretiva).")
+        flash("Selecione o Tipo de Manutenção (Preventiva ou Corretiva).")
         return redirect(url_for("dashboard"))
 
-    funcionarios_selecionados = [
-        f.strip()
+    funcs_selecionados = [
+        f
         for f in request.form.getlist("funcionarios")
-        if f.strip() in FUNCIONARIOS_VALIDOS
+        if f in FUNCIONARIOS_VALIDOS
     ]
-    if not funcionarios_selecionados:
-        flash("Selecione pelo menos um funcionário envolvido.")
+    if not funcs_selecionados:
+        flash("Selecione pelo menos um funcionário que atuou nesta O.S.")
         return redirect(url_for("dashboard"))
 
     tempo_str = request.form.get("tempo_trabalhado", "").strip()
-    horas_dec = tempo_hhmm_para_horas_decimais(tempo_str)
-    if horas_dec <= 0:
-        flash("Informe um tempo válido em horas trabalhadas (HH:MM).")
+    horas_decimais = tempo_hhmm_para_horas_decimais(tempo_str)
+    if horas_decimais <= 0:
+        flash("Informe um tempo trabalhado válido (maior que 00:00).")
         return redirect(url_for("dashboard"))
 
-    obs_tecnica = request.form.get("observacao_tecnica", "").strip()
-    peca_id_str = request.form.get("peca_id", "").strip()
-    try:
-        peca_qtd = max(1, int(request.form.get("peca_qtd", "1")))
-    except ValueError:
-        peca_qtd = 1
+    obs_tecnica = request.form.get("observacao_tecnica", "").strip()[:2000]
+    peca_id_raw = request.form.get("peca_id", "").strip()
+    peca_qtd_raw = request.form.get("peca_qtd", "1").strip()
 
-    arquivos_ev = request.files.getlist("evidencia_foto")
-    existentes_ev = listar_evidencias_ordem(ordem)
-    novas_ev, erro_ev = salvar_multiplas_evidencias_os(
-        arquivos_ev, ordem.numero_os, existentes=len(existentes_ev)
+    existentes = listar_evidencias_ordem(ordem)
+    arquivos_evidencia = request.files.getlist("evidencia_foto")
+    novos_itens_ev, erro_evidencia = salvar_multiplas_evidencias_os(
+        arquivos_evidencia,
+        ordem.numero_os,
+        existentes=len(existentes),
+        ordem_id=ordem.id,
     )
-    if erro_ev:
-        flash(erro_ev)
+    if erro_evidencia:
+        db.session.rollback()
+        flash(erro_evidencia)
         return redirect(url_for("dashboard"))
 
-    if peca_id_str:
-        try:
-            peca_id = int(peca_id_str)
-            with estoque_lock:
-                peca = db.session.get(ItemEstoque, peca_id)
-                if not peca:
-                    for item in novas_ev:
-                        remover_evidencia_os(item["arquivo"])
-                    flash("Peça de estoque não encontrada.")
-                    return redirect(url_for("dashboard"))
-                if peca.quantidade < peca_qtd:
-                    for item in novas_ev:
-                        remover_evidencia_os(item["arquivo"])
-                    flash(
-                        f"Saldo insuficiente para '{peca.nome}' (Disponível:"
-                        f" {peca.quantidade})."
-                    )
-                    return redirect(url_for("dashboard"))
-                peca.quantidade -= peca_qtd
-                peca.ultima_atualizacao = agora_formatado()
-                db.session.add(
-                    HistoricoMovimentacao(
-                        peca_codigo=peca.codigo,
-                        peca_nome=peca.nome,
-                        tipo="Retirada",
-                        quantidade=peca_qtd,
-                        solicitante=f"O.S. {ordem.numero_os}",
-                        data_hora=agora_formatado(),
-                    )
-                )
-        except ValueError:
-            pass
-
-    ordem.finalizacao = agora_formatado()
-    ordem.status = "Finalizada"
-    ordem.tipo_manutencao = tipo_manutencao
-    ordem.funcionarios = ", ".join(funcionarios_selecionados)
-    ordem.horas_trabalhadas = horas_dec
-    ordem.observacao_tecnica = obs_tecnica
-    ordem.motivo_pausa = ""
-    if novas_ev:
-        gravar_evidencias_ordem(ordem, existentes_ev + novas_ev)
     try:
+        if peca_id_raw:
+            try:
+                p_id = int(peca_id_raw)
+                p_qtd = int(peca_qtd_raw)
+                peca = db.session.get(ItemEstoque, p_id)
+                if peca and p_qtd > 0:
+                    if peca.quantidade < p_qtd:
+                        for item in novos_itens_ev:
+                            remover_evidencia_os(item["arquivo"])
+                        flash(
+                            f"Saldo insuficiente em estoque para '{peca.nome}'"
+                            f" (Saldo: {peca.quantidade})."
+                        )
+                        return redirect(url_for("dashboard"))
+                    peca.quantidade -= p_qtd
+                    peca.ultima_atualizacao = agora_formatado()
+                    db.session.add(
+                        HistoricoMovimentacao(
+                            peca_codigo=peca.codigo,
+                            peca_nome=peca.nome,
+                            tipo="Retirada",
+                            quantidade=p_qtd,
+                            solicitante=f"Baixa via O.S. {ordem.numero_os}",
+                            data_hora=agora_formatado(),
+                        )
+                    )
+            except ValueError:
+                pass
+
+        ordem.finalizacao = agora_formatado()
+        ordem.status = "Finalizada"
+        ordem.motivo_pausa = ""
         ordem.tempo_total = calcular_tempo_total(
             ordem.abertura, ordem.finalizacao
         )
+        ordem.tipo_manutencao = tipo_manutencao
+        ordem.funcionarios = ", ".join(funcs_selecionados)
+        ordem.horas_trabalhadas = horas_decimais
+        ordem.observacao_tecnica = obs_tecnica
+        if novos_itens_ev:
+            gravar_evidencias_ordem(ordem, existentes + novos_itens_ev)
+
+        db.session.commit()
+        registrar_auditoria(
+            "Ordens de Serviço",
+            "Finalização O.S.",
+            f"O.S. {ordem.numero_os} finalizada por {ordem.funcionarios} com"
+            f" {len(novos_itens_ev)} foto(s)",
+        )
+        flash(
+            f"Ordem de Serviço {ordem.numero_os} finalizada e auditada com"
+            " sucesso!"
+        )
     except Exception:
-        ordem.tempo_total = horas_decimais_para_hhmm(horas_dec)
-
-    db.session.commit()
-    registrar_auditoria(
-        "Ordens de Serviço",
-        "Finalização O.S.",
-        f"O.S. {ordem.numero_os} finalizada ({tipo_manutencao}, {horas_dec}h, {len(novas_ev)} foto(s) nova(s))",
-    )
-    flash(
-        f"Ordem de Serviço {ordem.numero_os} finalizada ({horas_dec}h apontadas)!"
-    )
+        db.session.rollback()
+        for item in novos_itens_ev:
+            remover_evidencia_os(item["arquivo"])
+        flash("Erro ao finalizar Ordem de Serviço.")
     return redirect(url_for("dashboard"))
-
-
-@app.route("/os/pausar/<int:id>", methods=["POST"])
-def pausar_os(id):
-    ordem = db.session.get(OrdemServico, id)
-    if not ordem or ordem.status == "Finalizada":
-        flash("Não é possível alterar espera em O.S. inexistente ou já finalizada.")
-        return redirect(url_for("dashboard"))
-    novo_status = request.form.get("novo_status", "Aguardando Peça").strip()
-    motivo = request.form.get("motivo_pausa", "").strip()
-    if novo_status not in ("Aguardando Peça", "Aberta"):
-        novo_status = "Aguardando Peça"
-    ordem.status = novo_status
-    ordem.motivo_pausa = motivo if novo_status == "Aguardando Peça" else ""
-    db.session.commit()
-    registrar_auditoria(
-        "Ordens de Serviço",
-        "Status de Espera",
-        f"O.S. {ordem.numero_os} -> {novo_status} ({motivo})",
-    )
-    flash(f"Status da O.S. {ordem.numero_os} alterado para '{novo_status}'.")
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/os/imprimir/<int:id>")
-def imprimir_os(id):
-    ordem = db.session.get(OrdemServico, id)
-    if not ordem:
-        flash("Ordem de Serviço não encontrada.")
-        return redirect(url_for("dashboard"))
-    return renderizar(
-        HTML_IMPRESSAO_OS, os=ordem, fmt_hhmm=horas_decimais_para_hhmm
-    )
 
 
 @app.route("/excluir/<int:id>", methods=["POST"])
@@ -4831,126 +4719,117 @@ def excluir(id):
         db.session.commit()
         remover_evidencia_os(ev_antiga)
         registrar_auditoria(
-            "Ordens de Serviço", "Exclusão O.S.", f"O.S. {num} removida."
+            "Ordens de Serviço", "Exclusão O.S.", f"O.S. {num} removida"
         )
-        flash(f"Ordem de Serviço {num} excluída!")
+        flash(f"Ordem de Serviço {num} excluída.")
     return redirect(url_for("dashboard"))
+
+
+@app.route("/imprimir/os/<int:id>")
+def imprimir_os(id):
+    ordem = db.session.get(OrdemServico, id)
+    if not ordem:
+        return "Ordem de Serviço não encontrada.", 404
+    return renderizar(
+        HTML_IMPRESSAO_OS, os=ordem, fmt_hhmm=horas_decimais_para_hhmm
+    )
 
 
 @app.route("/excel")
 def excel():
     ordens = OrdemServico.query.order_by(OrdemServico.id.desc()).all()
-    df = pd.DataFrame(
-        [
-            {
-                "OS": o.numero_os,
-                "Solicitante": o.solicitante,
-                "Máquina / Setor": o.setor or "",
-                "Causa": o.titulo or "",
-                "Laudo Técnico": o.observacao_tecnica or "",
-                "Qtd Evidências": len(listar_evidencias_ordem(o)),
-                "Prioridade": o.prioridade,
-                "Responsável": o.responsavel or "",
-                "Tipo": o.tipo_manutencao or "",
-                "Funcionários": o.funcionarios or "",
-                "Horas": o.horas_trabalhadas or 0.0,
-                "Status": o.status,
-                "Abertura": o.abertura,
-                "Finalização": o.finalizacao or "",
-                "Lead Time": o.tempo_total or "",
-            }
-            for o in ordens
-        ],
-        columns=[
-            "OS",
-            "Solicitante",
-            "Máquina / Setor",
-            "Causa",
-            "Laudo Técnico",
-            "Qtd Evidências",
-            "Prioridade",
-            "Responsável",
-            "Tipo",
-            "Funcionários",
-            "Horas",
-            "Status",
-            "Abertura",
-            "Finalização",
-            "Lead Time",
-        ],
-    )
-    registrar_auditoria(
-        "Ordens de Serviço", "Exportar Excel", "Planilha de O.S. exportada."
-    )
+    dados = [
+        {
+            "Número O.S.": o.numero_os,
+            "Solicitante": o.solicitante,
+            "Máquina / Setor": o.setor or "",
+            "Causa": o.titulo or "",
+            "Prioridade": o.prioridade,
+            "Responsável": o.responsavel or "",
+            "Tipo Manutenção": o.tipo_manutencao or "",
+            "Funcionários": o.funcionarios or "",
+            "Tempo Apontado": (
+                horas_decimais_para_hhmm(o.horas_trabalhadas)
+                if o.horas_trabalhadas
+                else ""
+            ),
+            "Laudo Técnico": o.observacao_tecnica or "",
+            "Evidências Fotográficas": (
+                f"{len(o.evidencias_lista)} foto(s)"
+                if o.evidencias_lista
+                else ""
+            ),
+            "Status": o.status,
+            "Abertura": o.abertura,
+            "Finalização": o.finalizacao or "",
+            "Lead Time": o.tempo_total or "",
+        }
+        for o in ordens
+    ]
     return gerar_excel(
-        df, "Ordens de Serviço", "ordens_servico", coluna_status="Status"
+        pd.DataFrame(dados),
+        "Ordens de Servico",
+        "ordens_servico",
+        coluna_status="Status",
     )
 
 
-@app.route("/gestao")
+# ==============================================================================
+# CENTRAL DE GESTÃO UNIFICADA (PROTEGIDA POR SENHA)
+# ==============================================================================
+@app.route("/central-gestao")
 @requer_login
 def central_gestao():
-    pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
+    pecas = ItemEstoque.query.order_by(ItemEstoque.nome.asc()).all()
+    movimentacoes = (
+        HistoricoMovimentacao.query.order_by(HistoricoMovimentacao.id.desc())
+        .limit(40)
+        .all()
+    )
     total_pecas = len(pecas)
     total_quantidade = sum(p.quantidade for p in pecas)
     itens_baixo = sum(1 for p in pecas if p.quantidade <= p.estoque_minimo)
-    movimentacoes = (
-        HistoricoMovimentacao.query.order_by(HistoricoMovimentacao.id.desc())
-        .limit(50)
-        .all()
-    )
     total_movimentacoes = HistoricoMovimentacao.query.count()
     mapa_estoque = {p.codigo.upper(): p.quantidade for p in pecas}
 
-    repor_codigo = request.args.get("repor_codigo", "").strip()
-    repor_nome = request.args.get("repor_nome", "").strip()
-    repor_qtd = request.args.get("repor_qtd", "1").strip()
-    repor_item = None
-    if repor_codigo and repor_nome:
-        try:
-            qtd_int = max(1, int(repor_qtd))
-        except ValueError:
-            qtd_int = 1
-        repor_item = {
-            "codigo": repor_codigo,
-            "nome": repor_nome,
-            "qtd": qtd_int,
-        }
-
     maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
 
-    planos_raw = PlanoPreventivo.query.order_by(
-        PlanoPreventivo.proxima_execucao.asc(), PlanoPreventivo.id.asc()
-    ).all()
-    hoje_dt = date.today()
-    limite_7d = hoje_dt + timedelta(days=7)
-    planos = []
-    atrasados = 0
-    agendados = 0
-    proximos = 0
-    for pl in planos_raw:
-        st_calc = status_plano(pl, hoje_dt)
-        if st_calc == "Atrasado":
-            atrasados += 1
-        else:
-            agendados += 1
-        dt_pl = parse_data_br(pl.proxima_execucao)
-        if dt_pl is not None and hoje_dt <= dt_pl <= limite_7d:
-            proximos += 1
-        pl.status_calc = st_calc
-        planos.append(pl)
-
+    hoje = date.today()
+    planos = PlanoPreventivo.query.all()
+    for p in planos:
+        p.status_calc = status_plano(p, hoje)
+    planos.sort(
+        key=lambda x: (
+            0 if x.status_calc == "Atrasado" else 1,
+            parse_data_br(x.proxima_execucao) or date.max,
+        )
+    )
+    total_planos = len(planos)
+    atrasados = sum(1 for p in planos if p.status_calc == "Atrasado")
+    agendados = total_planos - atrasados
     arquivos_pcm = ArquivoPCM.query.order_by(ArquivoPCM.id.desc()).all()
 
-    compras = (
-        SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.desc())
-        .limit(100)
-        .all()
+    compras = SolicitacaoCompra.query.order_by(
+        SolicitacaoCompra.id.desc()
+    ).all()
+    total_sc = len(compras)
+    emergenciais = sum(
+        1 for c in compras if c.tipo_sc == "S.C. Emergencial"
     )
-    emergenciais = sum(1 for c in compras if c.tipo_sc == "S.C. Emergencial")
-    programadas = sum(1 for c in compras if c.tipo_sc == "S.C. Programada")
+    programadas = sum(
+        1 for c in compras if c.tipo_sc == "S.C. Programada"
+    )
     reposicao = sum(
         1 for c in compras if c.tipo_sc == "S.C. Reposição / Estoque"
+    )
+
+    repor_codigo = request.args.get("repor_codigo", "").strip()
+    repor_nome = request.args.get("repor_nome", "").strip()
+    repor_qtd = request.args.get("repor_qtd", "").strip()
+    repor_item = (
+        {"codigo": repor_codigo, "nome": repor_nome, "qtd": repor_qtd}
+        if repor_codigo
+        else None
     )
 
     ordens_fin = OrdemServico.query.filter_by(status="Finalizada").all()
@@ -4962,215 +4841,222 @@ def central_gestao():
         1 for o in ordens_fin if o.tipo_manutencao == "Corretiva"
     )
     pct_geral_prev = (
-        round((total_preventiva / total_fin) * 100) if total_fin else 0
+        round((total_preventiva / total_fin) * 100, 1) if total_fin > 0 else 0
     )
 
-    horas_corretivas = [
-        float(o.horas_trabalhadas or 0.0)
-        for o in ordens_fin
-        if o.tipo_manutencao == "Corretiva"
+    corretivas = [
+        o for o in ordens_fin if o.tipo_manutencao == "Corretiva"
     ]
-    mttr_horas = (
-        (sum(horas_corretivas) / len(horas_corretivas))
-        if horas_corretivas
-        else 0.0
-    )
-    mttr_str = formatar_duracao_indicador(mttr_horas)
-
-    meses_map = {}
-    for o in ordens_fin:
-        chave = chave_mes_os(o)
-        if not chave:
-            continue
-        if chave not in meses_map:
-            ano, mes = chave.split("-")
-            meses_map[chave] = {
-                "chave": chave,
-                "mes_nome": f"{MESES_PT.get(mes, mes)}/{ano}",
-                "nome": f"{MESES_PT.get(mes, mes)}/{ano}",
-                "prev_qtd": 0,
-                "corr_qtd": 0,
-                "horas_total": 0.0,
-            }
-        if o.tipo_manutencao == "Preventiva":
-            meses_map[chave]["prev_qtd"] += 1
-        elif o.tipo_manutencao == "Corretiva":
-            meses_map[chave]["corr_qtd"] += 1
-        meses_map[chave]["horas_total"] += float(o.horas_trabalhadas or 0.0)
-
-    dados_tabela = sorted(meses_map.values(), key=lambda x: x["chave"])
-    meses = [
-        {"chave": d["chave"], "nome": d["nome"]} for d in reversed(dados_tabela)
+    horas_corr = [
+        o.horas_trabalhadas
+        for o in corretivas
+        if (o.horas_trabalhadas or 0) > 0
     ]
+    mttr_horas = sum(horas_corr) / len(horas_corr) if horas_corr else 0.0
+    mttr_str = horas_decimais_para_hhmm(mttr_horas)
 
-    maquinas_map = {}
-    for o in ordens_fin:
-        if o.tipo_manutencao != "Corretiva":
-            continue
-        nome_exib = (o.setor or o.titulo or "").strip() or "Geral / Não Informado"
-        chave_maq = normalizar_chave_maquina(nome_exib)
-        if chave_maq not in maquinas_map:
-            maquinas_map[chave_maq] = {
+    grupos_maquinas = {}
+    for o in corretivas:
+        nome_maq = (o.setor or "").strip() or "Sem Máquina Informada"
+        chave_maq = normalizar_chave_maquina(nome_maq)
+        if chave_maq not in grupos_maquinas:
+            grupos_maquinas[chave_maq] = {
                 "chave": chave_maq,
-                "nome": nome_exib,
+                "nome": nome_maq,
+                "datas": [],
+                "horas": [],
                 "corretivas": 0,
-                "horas_total": 0.0,
-                "datas_falha": [],
             }
-        entry_m = maquinas_map[chave_maq]
-        entry_m["corretivas"] += 1
-        entry_m["horas_total"] += float(o.horas_trabalhadas or 0.0)
-        dt_ref = None
-        for campo in (o.abertura, o.finalizacao):
-            try:
-                dt_ref = datetime.strptime(campo, FORMATO_DATA)
-                break
-            except (ValueError, TypeError):
-                continue
-        if dt_ref:
-            entry_m["datas_falha"].append(dt_ref)
+        grupos_maquinas[chave_maq]["corretivas"] += 1
+        if (o.horas_trabalhadas or 0) > 0:
+            grupos_maquinas[chave_maq]["horas"].append(o.horas_trabalhadas)
+        try:
+            dt_ab = datetime.strptime(o.abertura, FORMATO_DATA)
+            grupos_maquinas[chave_maq]["datas"].append(dt_ab)
+        except Exception:
+            pass
 
     mtbf_maquinas = []
-    mtbf_valores_validos = []
-    for chave_maq, entry_m in maquinas_map.items():
-        falhas = entry_m["corretivas"]
-        horas_tot = round(entry_m["horas_total"], 2)
-        mttr_m = (horas_tot / falhas) if falhas else 0.0
-        mtbf_m = None
-        if falhas >= 2 and len(entry_m["datas_falha"]) >= 2:
-            datas_ord = sorted(entry_m["datas_falha"])
-            janela_horas = max(
-                1.0,
-                (datas_ord[-1] - datas_ord[0]).total_seconds() / 3600.0,
-            )
-            tempo_operacional = max(0.0, janela_horas - horas_tot)
-            mtbf_m = tempo_operacional / (falhas - 1)
-            mtbf_valores_validos.append(mtbf_m)
+    intervalos_gerais_horas = []
+    for chave_maq, info in grupos_maquinas.items():
+        datas_ord = sorted(info["datas"])
+        mtbf_maq_h = 0.0
+        if len(datas_ord) >= 2:
+            diffs_h = [
+                max(0.0, (datas_ord[i] - datas_ord[i - 1]).total_seconds() / 3600.0)
+                for i in range(1, len(datas_ord))
+            ]
+            mtbf_maq_h = sum(diffs_h) / len(diffs_h)
+            intervalos_gerais_horas.extend(diffs_h)
+
+        mttr_maq_h = (
+            sum(info["horas"]) / len(info["horas"]) if info["horas"] else 0.0
+        )
+        horas_totais_maq = sum(info["horas"])
         mtbf_maquinas.append({
             "chave": chave_maq,
-            "nome": entry_m["nome"],
-            "corretivas": falhas,
-            "horas_str": horas_decimais_para_hhmm(horas_tot),
-            "mttr_str": formatar_duracao_indicador(mttr_m),
+            "nome": info["nome"],
+            "corretivas": info["corretivas"],
+            "mtbf_horas": round(mtbf_maq_h, 2),
             "mtbf_str": (
-                formatar_duracao_indicador(mtbf_m)
-                if mtbf_m is not None
-                else "N/A (<2 falhas)"
+                formatar_duracao_indicador(mtbf_maq_h)
+                if len(datas_ord) >= 2
+                else "Aguard. 2ª falha"
             ),
+            "mttr_str": horas_decimais_para_hhmm(mttr_maq_h),
+            "horas_str": horas_decimais_para_hhmm(horas_totais_maq),
         })
 
-    mtbf_maquinas.sort(key=lambda x: x["corretivas"], reverse=True)
-    mtbf_geral = (
-        (sum(mtbf_valores_validos) / len(mtbf_valores_validos))
-        if mtbf_valores_validos
+    mtbf_maquinas.sort(key=lambda x: (-x["corretivas"], x["nome"].lower()))
+    mtbf_horas = (
+        sum(intervalos_gerais_horas) / len(intervalos_gerais_horas)
+        if intervalos_gerais_horas
         else 0.0
     )
     mtbf_str = (
-        formatar_duracao_indicador(mtbf_geral)
-        if mtbf_valores_validos
-        else "N/A"
+        formatar_duracao_indicador(mtbf_horas)
+        if intervalos_gerais_horas
+        else "Sem recorrência"
     )
 
-    mes_sel = request.args.get("mes", "geral").strip()
-    if mes_sel != "geral" and mes_sel not in meses_map:
-        mes_sel = "geral"
+    agrupamento = {}
+    for o in ordens_fin:
+        chave = chave_mes_os(o) or "Sem Data"
+        if chave not in agrupamento:
+            agrupamento[chave] = {
+                "prev": 0,
+                "corr": 0,
+                "total": 0,
+                "horas": 0.0,
+            }
+        agrupamento[chave]["total"] += 1
+        agrupamento[chave]["horas"] += o.horas_trabalhadas or 0.0
+        if o.tipo_manutencao == "Preventiva":
+            agrupamento[chave]["prev"] += 1
+        elif o.tipo_manutencao == "Corretiva":
+            agrupamento[chave]["corr"] += 1
 
-    ordens_filtro = ordens_fin
+    dados_tabela = []
+    meses_lista = []
+    for chave in sorted(agrupamento.keys(), reverse=True):
+        item = agrupamento[chave]
+        partes = chave.split("-")
+        mes_nome = (
+            f"{MESES_PT.get(partes[1], partes[1])}/{partes[0]}"
+            if len(partes) == 2
+            else chave
+        )
+        meses_lista.append({"chave": chave, "nome": mes_nome})
+        dados_tabela.append({
+            "chave": chave,
+            "mes_nome": mes_nome,
+            "total_os": item["total"],
+            "prev_qtd": item["prev"],
+            "corr_qtd": item["corr"],
+        })
+
+    mes_sel = request.args.get("mes", "geral")
     if mes_sel != "geral":
-        ordens_filtro = [o for o in ordens_fin if chave_mes_os(o) == mes_sel]
+        ordens_filtradas = [
+            o for o in ordens_fin if chave_mes_os(o) == mes_sel
+        ]
+    else:
+        ordens_filtradas = ordens_fin
 
     funcionarios_indiv = []
-    for dupla in DUPLAS:
-        for papel, chave_nome in (
-            ("Mecânico", "mecanico"),
-            ("Eletricista", "eletricista"),
-        ):
-            nome_func = dupla[chave_nome]
-            horas_func = 0.0
-            qtd_os_func = 0
-            dias_set = set()
-            for o in ordens_filtro:
-                lista_eq = [
-                    x.strip() for x in (o.funcionarios or "").split(",")
-                ]
-                if nome_func in lista_eq:
-                    qtd_os_func += 1
-                    horas_func += float(o.horas_trabalhadas or 0.0)
-                    for campo in (o.finalizacao, o.abertura):
-                        try:
-                            dias_set.add(
-                                datetime.strptime(campo, FORMATO_DATA).strftime(
-                                    "%Y-%m-%d"
-                                )
-                            )
-                            break
-                        except (ValueError, TypeError):
-                            pass
-            dias_count = len(dias_set)
-            horas_func = round(horas_func, 2)
-            capacidade = (
-                (dias_count * JORNADA_REFERENCIA)
-                if dias_count > 0
-                else JORNADA_REFERENCIA
-            )
-            ef = (
-                round((horas_func / capacidade) * 100, 1)
-                if capacidade > 0
-                else 0.0
-            )
-            funcionarios_indiv.append({
-                "nome": nome_func,
-                "funcao": papel,
-                "icone": dupla["icone"],
-                "equipe": dupla["nome"],
-                "turno": dupla["turno"],
-                "tempo_str": horas_decimais_para_hhmm(horas_func),
-                "qtd_os": qtd_os_func,
-                "dias": dias_count,
-                "eficiencia": ef,
-                "eficiencia_clamp": min(100, max(0, ef)),
-            })
+    for f_info in FUNCIONARIOS_EQUIPE:
+        valor_id = f_info["valor"]
+        nome_curto = f_info["nome"]
+        horas_totais = 0.0
+        qtd_os = 0
+        dias_unicos = set()
 
-    logs = LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(100).all()
+        for o in ordens_filtradas:
+            lista_funcs = [
+                x.strip()
+                for x in (o.funcionarios or "").split(",")
+                if x.strip()
+            ]
+            # Compatibilidade com registros antigos salvos apenas como "Jefferson"
+            match_legado = (
+                nome_curto == "Jefferson"
+                and "Jefferson" in lista_funcs
+                and f_info["funcao"] == "Eletricista"
+            )
+            if valor_id in lista_funcs or match_legado:
+                qtd_os += 1
+                horas_totais += o.horas_trabalhadas or 0.0
+                for campo_dt in (o.finalizacao, o.abertura):
+                    try:
+                        dt_obj = datetime.strptime(campo_dt, FORMATO_DATA)
+                        dias_unicos.add(dt_obj.date())
+                        break
+                    except Exception:
+                        continue
+
+        qtd_dias = len(dias_unicos)
+        capacidade = qtd_dias * JORNADA_REFERENCIA
+        ef_indiv = (
+            round((horas_totais / capacidade) * 100, 1)
+            if capacidade > 0
+            else 0.0
+        )
+
+        funcionarios_indiv.append({
+            "nome": f_info["nome"],
+            "funcao": f_info["funcao"],
+            "icone": f_info["icone"],
+            "equipe": f_info["equipe"],
+            "turno": f_info["turno"],
+            "horas_totais": round(horas_totais, 2),
+            "tempo_str": horas_decimais_para_hhmm(horas_totais),
+            "qtd_os": qtd_os,
+            "dias": qtd_dias,
+            "eficiencia": ef_indiv,
+            "eficiencia_clamp": min(100, ef_indiv),
+        })
+
+    logs = (
+        LogAuditoria.query.order_by(LogAuditoria.id.desc()).limit(60).all()
+    )
     tamanho_db = (
         round(os.path.getsize(DB_PATH) / 1024, 1)
-        if (not IS_POSTGRES and os.path.exists(DB_PATH))
-        else 0.0
+        if not IS_POSTGRES and os.path.exists(DB_PATH)
+        else 0
     )
+    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
     resumo_banco = {
         "ordens": OrdemServico.query.count(),
         "estoque": total_pecas,
         "maquinas": len(maquinas),
-        "planos": len(planos),
-        "compras": SolicitacaoCompra.query.count(),
+        "planos": total_planos,
+        "compras": total_sc,
     }
-    ultimo_os_id = db.session.query(db.func.max(OrdemServico.id)).scalar() or 0
 
     return renderizar(
         HTML_CENTRAL_GESTAO,
         pecas=pecas,
+        movimentacoes=movimentacoes,
         total_pecas=total_pecas,
         total_quantidade=total_quantidade,
         itens_baixo=itens_baixo,
-        movimentacoes=movimentacoes,
         total_movimentacoes=total_movimentacoes,
         mapa_estoque=mapa_estoque,
-        repor_item=repor_item,
         maquinas=maquinas,
         planos=planos,
-        arquivos_pcm=arquivos_pcm,
-        total_planos=len(planos),
-        atrasados=atrasados,
+        total_planos=total_planos,
         agendados=agendados,
-        proximos=proximos,
+        atrasados=atrasados,
+        arquivos_pcm=arquivos_pcm,
         compras=compras,
-        total_sc=len(compras),
+        total_sc=total_sc,
         emergenciais=emergenciais,
         programadas=programadas,
         reposicao=reposicao,
         proxima_sc=gerar_numero_sc(),
         hoje=hoje_iso(),
         centros_custo_opcoes=CENTROS_CUSTO_OFICIAIS,
+        repor_item=repor_item,
         total_fin=total_fin,
         total_preventiva=total_preventiva,
         total_corretiva=total_corretiva,
@@ -5178,60 +5064,57 @@ def central_gestao():
         mttr_str=mttr_str,
         mtbf_str=mtbf_str,
         mtbf_maquinas=mtbf_maquinas,
-        total_meses=len(dados_tabela),
         dados_tabela=dados_tabela,
-        meses=meses,
+        total_meses=len(dados_tabela),
+        meses=meses_lista,
         mes_sel=mes_sel,
         funcionarios_indiv=funcionarios_indiv,
         logs=logs,
         tamanho_db=tamanho_db,
-        resumo_banco=resumo_banco,
         is_postgres=IS_POSTGRES,
+        resumo_banco=resumo_banco,
         ultimo_os_id=ultimo_os_id,
     )
 
 
 # ==============================================================================
-# ROTAS ESTOQUE, SPARE PARTS, PCM, COMPRAS E GOVERNANÇA
+# ROTAS DE ESTOQUE, SPARE PARTS, PCM, COMPRAS & GOVERNANÇA
 # ==============================================================================
 @app.route("/estoque/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_peca():
     codigo = request.form.get("codigo", "").strip().upper()
     nome = request.form.get("nome", "").strip()
-    categoria = request.form.get("categoria", "Geral").strip()
-    localizacao = request.form.get("localizacao", "").strip()
-    try:
-        quantidade = max(0, int(request.form.get("quantidade", "0")))
-        estoque_minimo = max(1, int(request.form.get("estoque_minimo", "2")))
-    except ValueError:
-        flash("Valores numéricos inválidos.")
-        return redirect(url_for("central_gestao", tab="estoque"))
-
     if not codigo or not nome:
-        flash("Código e Nome da peça são obrigatórios.")
+        flash("Preencha o Código e o Nome da Peça.")
+        return redirect(url_for("central_gestao", tab="estoque"))
+    try:
+        quantidade = max(0, int(request.form.get("quantidade", 0)))
+        estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
+    except ValueError:
+        flash("Valores inválidos.")
         return redirect(url_for("central_gestao", tab="estoque"))
 
     with estoque_lock:
         if ItemEstoque.query.filter_by(codigo=codigo).first():
-            flash(f"Já existe uma peça cadastrada com o código {codigo}.")
+            flash(f"Já existe uma peça com o código {codigo}.")
             return redirect(url_for("central_gestao", tab="estoque"))
-
-        nova_peca = ItemEstoque(
-            codigo=codigo,
-            nome=nome,
-            categoria=categoria,
-            localizacao=localizacao,
+        peca = ItemEstoque(
+            codigo=codigo[:50],
+            nome=nome[:150],
+            categoria=request.form.get("categoria", "").strip()[:100]
+            or "Geral",
+            localizacao=request.form.get("localizacao", "").strip()[:100],
             quantidade=quantidade,
             estoque_minimo=estoque_minimo,
             ultima_atualizacao=agora_formatado(),
         )
-        db.session.add(nova_peca)
+        db.session.add(peca)
         if quantidade > 0:
             db.session.add(
                 HistoricoMovimentacao(
-                    peca_codigo=codigo,
-                    peca_nome=nome,
+                    peca_codigo=codigo[:50],
+                    peca_nome=nome[:150],
                     tipo="Entrada",
                     quantidade=quantidade,
                     solicitante="Cadastro Inicial",
@@ -5239,49 +5122,41 @@ def cadastrar_peca():
                 )
             )
         db.session.commit()
-
-    registrar_auditoria(
-        "Estoque",
-        "Cadastro Peça",
-        f"SKU {codigo} ({nome}) cadastrado com saldo {quantidade}.",
-    )
-    flash(f"Peça {codigo} — {nome} cadastrada no estoque!")
+        registrar_auditoria(
+            "Estoque",
+            "Cadastro Peça",
+            f"SKU {codigo} - {nome} (Qtd: {quantidade})",
+        )
+        flash(f"Peça '{nome}' cadastrada com sucesso.")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
 @app.route("/estoque/movimentar/<int:id>", methods=["POST"])
 @requer_login
 def movimentar_estoque(id):
-    tipo = request.form.get("tipo", "Retirada").strip()
+    tipo = request.form.get("tipo", "Retirada")
     solicitante = request.form.get("solicitante", "").strip()
     try:
-        qtd = int(request.form.get("qtd", "0"))
+        qtd = int(request.form.get("qtd", 0))
     except ValueError:
         qtd = 0
-
-    if qtd <= 0 or tipo not in ("Entrada", "Retirada"):
-        flash("Quantidade ou tipo de movimentação inválido.")
-        return redirect(url_for("central_gestao", tab="estoque"))
-    if tipo == "Retirada" and not solicitante:
-        flash("Informe o Solicitante ou O.S. para retirada.")
+    if qtd <= 0:
+        flash("Informe quantidade maior que zero.")
         return redirect(url_for("central_gestao", tab="estoque"))
 
     with estoque_lock:
         peca = db.session.get(ItemEstoque, id)
         if not peca:
-            flash("Peça não encontrada.")
             return redirect(url_for("central_gestao", tab="estoque"))
         if tipo == "Retirada":
             if peca.quantidade < qtd:
-                flash(
-                    f"Saldo insuficiente! Disponível: {peca.quantidade} de"
-                    f" {peca.nome}."
-                )
+                flash(f"Saldo insuficiente ({peca.quantidade}).")
                 return redirect(url_for("central_gestao", tab="estoque"))
             peca.quantidade -= qtd
+            origem = solicitante[:100]
         else:
             peca.quantidade += qtd
-
+            origem = solicitante[:100] or "Reposição de Estoque"
         peca.ultima_atualizacao = agora_formatado()
         db.session.add(
             HistoricoMovimentacao(
@@ -5289,21 +5164,15 @@ def movimentar_estoque(id):
                 peca_nome=peca.nome,
                 tipo=tipo,
                 quantidade=qtd,
-                solicitante=solicitante or "Entrada em Estoque",
+                solicitante=origem,
                 data_hora=agora_formatado(),
             )
         )
         db.session.commit()
-
-    registrar_auditoria(
-        "Estoque",
-        f"Movimentação ({tipo})",
-        f"{qtd}x {peca.codigo} ({peca.nome}) - {solicitante}",
-    )
-    flash(
-        f"{tipo} de {qtd}x '{peca.nome}' registrada! Novo saldo:"
-        f" {peca.quantidade}."
-    )
+        registrar_auditoria(
+            "Estoque", tipo, f"{qtd}x {peca.codigo} ({origem})"
+        )
+        flash(f"{tipo} de {qtd} unidade(s) registrada.")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
@@ -5312,49 +5181,25 @@ def movimentar_estoque(id):
 def editar_peca(id):
     peca = db.session.get(ItemEstoque, id)
     if not peca:
-        flash("Peça não encontrada.")
         return redirect(url_for("central_gestao", tab="estoque"))
-
     codigo = request.form.get("codigo", "").strip().upper()
     nome = request.form.get("nome", "").strip()
-    categoria = request.form.get("categoria", "").strip()
-    localizacao = request.form.get("localizacao", "").strip()
     try:
-        estoque_minimo = max(1, int(request.form.get("estoque_minimo", "2")))
+        estoque_minimo = max(1, int(request.form.get("estoque_minimo", 2)))
     except ValueError:
-        estoque_minimo = 2
-
-    if not codigo or not nome:
-        flash("Código e Nome são obrigatórios.")
         return redirect(url_for("central_gestao", tab="estoque"))
 
-    with estoque_lock:
-        duplicado = ItemEstoque.query.filter(
-            ItemEstoque.codigo == codigo, ItemEstoque.id != id
-        ).first()
-        if duplicado:
-            flash(f"Já existe outra peça com o código {codigo}.")
-            return redirect(url_for("central_gestao", tab="estoque"))
-
-        codigo_antigo = peca.codigo
-        peca.codigo = codigo
-        peca.nome = nome
-        peca.categoria = categoria
-        peca.localizacao = localizacao
-        peca.estoque_minimo = estoque_minimo
-        peca.ultima_atualizacao = agora_formatado()
-
-        if codigo_antigo != codigo:
-            HistoricoMovimentacao.query.filter_by(
-                peca_codigo=codigo_antigo
-            ).update({"peca_codigo": codigo})
-
-        db.session.commit()
-
-    registrar_auditoria(
-        "Estoque", "Edição Peça", f"Peça {codigo} ({nome}) atualizada."
+    peca.codigo = codigo[:50]
+    peca.nome = nome[:150]
+    peca.categoria = (
+        request.form.get("categoria", "").strip()[:100] or "Geral"
     )
-    flash(f"Dados da peça {codigo} atualizados!")
+    peca.localizacao = request.form.get("localizacao", "").strip()[:100]
+    peca.estoque_minimo = estoque_minimo
+    peca.ultima_atualizacao = agora_formatado()
+    db.session.commit()
+    registrar_auditoria("Estoque", "Edição Peça", f"SKU {codigo} atualizado")
+    flash(f"Peça '{peca.nome}' atualizada.")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
@@ -5363,168 +5208,142 @@ def editar_peca(id):
 def excluir_peca(id):
     peca = db.session.get(ItemEstoque, id)
     if peca:
-        info = f"{peca.codigo} - {peca.nome}"
+        cod = peca.codigo
         db.session.delete(peca)
         db.session.commit()
-        registrar_auditoria(
-            "Estoque", "Exclusão Peça", f"Peça {info} removida."
-        )
-        flash(f"Peça {info} removida do estoque.")
+        registrar_auditoria("Estoque", "Exclusão Peça", f"SKU {cod} removido")
+        flash(f"Peça '{peca.nome}' excluída.")
     return redirect(url_for("central_gestao", tab="estoque"))
 
 
 @app.route("/estoque/excel")
 @requer_login
 def excel_estoque():
-    pecas = ItemEstoque.query.order_by(ItemEstoque.codigo.asc()).all()
-    df = pd.DataFrame(
-        [
-            {
-                "Código": p.codigo,
-                "Peça": p.nome,
-                "Categoria": p.categoria,
-                "Localização": p.localizacao,
-                "Saldo Atual": p.quantidade,
-                "Estoque Mínimo": p.estoque_minimo,
-                "Status": (
-                    "Baixo Estoque"
-                    if p.quantidade <= p.estoque_minimo
-                    else "Normal"
-                ),
-                "Última Atualização": p.ultima_atualizacao,
-            }
-            for p in pecas
-        ],
-        columns=[
-            "Código",
-            "Peça",
-            "Categoria",
-            "Localização",
-            "Saldo Atual",
-            "Estoque Mínimo",
-            "Status",
-            "Última Atualização",
-        ],
-    )
-    registrar_auditoria(
-        "Estoque", "Exportar Excel", "Planilha de estoque exportada."
-    )
+    pecas = ItemEstoque.query.order_by(ItemEstoque.nome.asc()).all()
+    dados = [
+        {
+            "Código": p.codigo,
+            "Peça": p.nome,
+            "Categoria": p.categoria or "",
+            "Localização": p.localizacao or "",
+            "Saldo Atual": p.quantidade,
+            "Estoque Mínimo": p.estoque_minimo,
+            "Status": (
+                "Baixo Estoque"
+                if p.quantidade <= p.estoque_minimo
+                else "Normal"
+            ),
+            "Última Atualização": p.ultima_atualizacao,
+        }
+        for p in pecas
+    ]
     return gerar_excel(
-        df, "Estoque", "estoque_manutencao", coluna_status="Status"
+        pd.DataFrame(dados),
+        "Estoque",
+        "estoque_manutencao",
+        coluna_status="Status",
     )
 
 
-@app.route("/spare-parts/cadastrar", methods=["POST"])
+@app.route("/spare-parts/cadastrar-maquina", methods=["POST"])
 @requer_login
 def cadastrar_maquina_spare():
     maquina = request.form.get("maquina", "").strip()
     modelo = request.form.get("modelo", "").strip()
-    setor = request.form.get("setor", "").strip()
-    pecas_necessarias = request.form.get("pecas_necessarias", "").strip()
-    if not maquina or not modelo:
-        flash("Máquina e Modelo são obrigatórios.")
-        return redirect(url_for("central_gestao", tab="spare"))
-    nova = MaquinaSpare(
-        maquina=maquina,
-        modelo=modelo,
-        setor=setor,
-        pecas_necessarias=pecas_necessarias,
-    )
-    db.session.add(nova)
-    db.session.commit()
-    registrar_auditoria(
-        "Spare Parts",
-        "Cadastro Equipamento",
-        f"{maquina} ({modelo}) cadastrado.",
-    )
-    flash(f"Equipamento '{maquina}' cadastrado em Spare Parts!")
+    if maquina and modelo:
+        db.session.add(
+            MaquinaSpare(
+                maquina=maquina[:150],
+                modelo=modelo[:100],
+                setor=request.form.get("setor", "").strip()[:100],
+                pecas_necessarias=request.form.get(
+                    "pecas_necessarias", ""
+                ).strip(),
+            )
+        )
+        db.session.commit()
+        registrar_auditoria(
+            "Spare Parts", "Cadastro Máquina", f"{maquina} ({modelo})"
+        )
+        flash(f"Equipamento '{maquina}' cadastrado!")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/spare-parts/editar/<int:id>", methods=["POST"])
+@app.route("/spare-parts/editar-maquina/<int:id>", methods=["POST"])
 @requer_login
 def editar_maquina_spare(id):
     maq = db.session.get(MaquinaSpare, id)
     if not maq:
         flash("Equipamento não encontrado.")
         return redirect(url_for("central_gestao", tab="spare"))
+
     maquina = request.form.get("maquina", "").strip()
     modelo = request.form.get("modelo", "").strip()
-    setor = request.form.get("setor", "").strip()
-    pecas_necessarias = request.form.get("pecas_necessarias", "").strip()
     if not maquina or not modelo:
-        flash("Máquina e Modelo são obrigatórios.")
+        flash("Preencha o nome da máquina e o modelo.")
         return redirect(url_for("central_gestao", tab="spare"))
-    maq.maquina = maquina
-    maq.modelo = modelo
-    maq.setor = setor
-    maq.pecas_necessarias = pecas_necessarias
+
+    maq.maquina = maquina[:150]
+    maq.modelo = modelo[:100]
+    maq.setor = request.form.get("setor", "").strip()[:100]
+    maq.pecas_necessarias = request.form.get("pecas_necessarias", "").strip()
     db.session.commit()
     registrar_auditoria(
-        "Spare Parts", "Edição Equipamento", f"{maquina} ({modelo}) atualizado."
+        "Spare Parts", "Edição Máquina", f"{maq.maquina} ({maq.modelo})"
     )
-    flash(f"Equipamento '{maquina}' atualizado com sucesso!")
+    flash(f"Equipamento '{maq.maquina}' atualizado com sucesso!")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/spare-parts/excluir/<int:id>", methods=["POST"])
-@requer_login
-def excluir_maquina_spare(id):
-    maq = db.session.get(MaquinaSpare, id)
-    if maq:
-        nome = maq.maquina
-        db.session.delete(maq)
-        db.session.commit()
-        registrar_auditoria(
-            "Spare Parts", "Exclusão Equipamento", f"{nome} removido."
-        )
-        flash(f"Equipamento '{nome}' removido.")
-    return redirect(url_for("central_gestao", tab="spare"))
-
-
-@app.route("/spare-parts/peca/adicionar/<int:id>", methods=["POST"])
+@app.route("/spare-parts/adicionar-peca/<int:id>", methods=["POST"])
 @requer_login
 def adicionar_peca_spare(id):
     maq = db.session.get(MaquinaSpare, id)
-    if not maq:
-        flash("Equipamento não encontrado.")
-        return redirect(url_for("central_gestao", tab="spare"))
     nome_peca = request.form.get("nome_peca", "").strip()
-    codigo_peca = request.form.get("codigo_peca", "").strip().upper()
-    observacao = request.form.get("observacao", "").strip()
-    try:
-        quantidade = max(1, int(request.form.get("quantidade", "1")))
-    except ValueError:
-        quantidade = 1
-    if not nome_peca:
-        flash("Informe o nome da peça.")
-        return redirect(url_for("central_gestao", tab="spare"))
-    db.session.add(
-        PecaSpare(
-            maquina_spare_id=maq.id,
-            nome_peca=nome_peca,
-            codigo_peca=codigo_peca,
-            quantidade=quantidade,
-            observacao=observacao,
+    if maq and nome_peca:
+        try:
+            qtd = max(1, int(request.form.get("quantidade", 1)))
+        except ValueError:
+            qtd = 1
+        db.session.add(
+            PecaSpare(
+                maquina_spare_id=maq.id,
+                nome_peca=nome_peca[:150],
+                codigo_peca=request.form.get("codigo_peca", "")
+                .strip()
+                .upper()[:50],
+                quantidade=qtd,
+                observacao=request.form.get("observacao", "").strip()[:200],
+            )
         )
-    )
-    db.session.commit()
-    flash(f"Peça '{nome_peca}' vinculada a '{maq.maquina}'.")
+        db.session.commit()
+        flash(f"Peça '{nome_peca}' vinculada!")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/spare-parts/peca/excluir/<int:id>", methods=["POST"])
+@app.route("/spare-parts/excluir-peca/<int:id>", methods=["POST"])
 @requer_login
 def excluir_peca_spare(id):
     peca = db.session.get(PecaSpare, id)
     if peca:
         db.session.delete(peca)
         db.session.commit()
-        flash("Peça removida da lista técnica.")
+        flash("Peça removida.")
     return redirect(url_for("central_gestao", tab="spare"))
 
 
-@app.route("/spare-parts/qrcodes")
+@app.route("/spare-parts/excluir-maquina/<int:id>", methods=["POST"])
+@requer_login
+def excluir_maquina_spare(id):
+    maq = db.session.get(MaquinaSpare, id)
+    if maq:
+        db.session.delete(maq)
+        db.session.commit()
+        flash("Máquina excluída.")
+    return redirect(url_for("central_gestao", tab="spare"))
+
+
+@app.route("/spare-parts/etiquetas")
 @requer_login
 def etiquetas_qrcode():
     maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
@@ -5535,159 +5354,31 @@ def etiquetas_qrcode():
 @requer_login
 def cadastrar_plano_pcm():
     maquina = request.form.get("maquina", "").strip()
-    codigo_maquina = request.form.get("codigo_maquina", "").strip().upper()
-    setor = request.form.get("setor", "").strip()
     atividade = request.form.get("atividade", "").strip()
-    frequencia = request.form.get("frequencia", "Mensal").strip()
-    responsavel = request.form.get("responsavel", "").strip()
-    proxima_execucao = request.form.get("proxima_execucao", "").strip()
-
-    if not maquina or not atividade or not proxima_execucao:
-        flash("Máquina, Roteiro Preventivo e Data Programada são obrigatórios.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    dt_obj = parse_data_br(proxima_execucao)
-    if not dt_obj:
-        flash("Data programada inválida.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    novo_plano = PlanoPreventivo(
-        maquina=maquina,
-        codigo_maquina=codigo_maquina,
-        setor=setor,
-        atividade=atividade,
-        frequencia=frequencia,
-        responsavel=responsavel,
-        proxima_execucao=dt_obj.strftime("%Y-%m-%d"),
-        status="Agendado",
-    )
-    db.session.add(novo_plano)
-    db.session.commit()
-    registrar_auditoria(
-        "PCM",
-        "Cadastro Preventiva",
-        f"{maquina} ({frequencia}) agendado para {novo_plano.proxima_execucao}.",
-    )
-    flash(f"Plano preventivo para '{maquina}' cadastrado!")
-    return redirect(url_for("central_gestao", tab="pcm"))
-
-
-@app.route("/pcm/editar/<int:id>", methods=["POST"])
-@requer_login
-def editar_plano_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if not plano:
-        flash("Plano preventivo não encontrado.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    maquina = request.form.get("maquina", "").strip()
-    codigo_maquina = request.form.get("codigo_maquina", "").strip().upper()
-    setor = request.form.get("setor", "").strip()
-    atividade = request.form.get("atividade", "").strip()
-    frequencia = request.form.get("frequencia", "Mensal").strip()
-    responsavel = request.form.get("responsavel", "").strip()
-    proxima_execucao = request.form.get("proxima_execucao", "").strip()
-
-    if not maquina or not atividade or not proxima_execucao:
-        flash("Máquina, Roteiro e Data são obrigatórios.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    dt_obj = parse_data_br(proxima_execucao)
-    if not dt_obj:
-        flash("Data programada inválida.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    plano.maquina = maquina
-    plano.codigo_maquina = codigo_maquina
-    plano.setor = setor
-    plano.atividade = atividade
-    plano.frequencia = frequencia
-    plano.responsavel = responsavel
-    plano.proxima_execucao = dt_obj.strftime("%Y-%m-%d")
-    db.session.commit()
-    registrar_auditoria(
-        "PCM", "Edição Preventiva", f"Plano de {maquina} atualizado."
-    )
-    flash(f"Plano preventivo de '{maquina}' atualizado!")
-    return redirect(url_for("central_gestao", tab="pcm"))
-
-
-@app.route("/pcm/concluir/<int:id>", methods=["POST"])
-@requer_login
-def concluir_plano_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if not plano:
-        flash("Plano preventivo não encontrado.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    base_dt = parse_data_br(plano.proxima_execucao) or date.today()
-    nova_data = avancar_data(base_dt, plano.frequencia)
-    while nova_data <= date.today():
-        nova_data = avancar_data(nova_data, plano.frequencia)
-
-    plano.proxima_execucao = nova_data.strftime("%Y-%m-%d")
-    plano.status = "Agendado"
-    db.session.commit()
-    registrar_auditoria(
-        "PCM",
-        "Conclusão Preventiva",
-        f"{plano.maquina} reagendado para {plano.proxima_execucao}.",
-    )
-    flash(
-        f"Preventiva de '{plano.maquina}' concluída! Próxima:"
-        f" {plano.proxima_execucao}."
-    )
-    return redirect(url_for("central_gestao", tab="pcm"))
-
-
-@app.route("/pcm/gerar-os/<int:id>", methods=["POST"])
-@requer_login
-def gerar_os_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if not plano:
-        flash("Plano preventivo não encontrado.")
-        return redirect(url_for("central_gestao", tab="pcm"))
-
-    with os_lock:
-        numero = gerar_numero_os()
-        tag_txt = f" [{plano.codigo_maquina}]" if plano.codigo_maquina else ""
-        setor_maq = f"{plano.maquina}{tag_txt}"
-        nova_os = OrdemServico(
-            numero_os=numero,
-            solicitante="PCM",
-            setor=setor_maq,
-            titulo=f"Preventiva {plano.frequencia}: {plano.atividade[:140]}",
-            descricao=plano.atividade,
-            prioridade="Média",
-            responsavel=plano.setor or plano.responsavel or "Manutenção",
-            abertura=agora_formatado(),
-            status="Aberta",
-            tipo_manutencao="Preventiva",
+    proxima = parse_data_br(request.form.get("proxima_execucao"))
+    if maquina and atividade and proxima:
+        freq = request.form.get("frequencia", "Mensal")
+        if freq not in FREQUENCIA_PCM:
+            freq = "Mensal"
+        db.session.add(
+            PlanoPreventivo(
+                maquina=maquina[:150],
+                codigo_maquina=request.form.get("codigo_maquina", "")
+                .strip()
+                .upper()[:50],
+                setor=request.form.get("setor", "").strip()[:100],
+                atividade=atividade[:2000],
+                frequencia=freq,
+                responsavel=request.form.get("responsavel", "").strip()[:100],
+                proxima_execucao=proxima.strftime("%d/%m/%Y"),
+                status="Agendado",
+            )
         )
-        db.session.add(nova_os)
-        db.session.commit()
-
-    registrar_auditoria(
-        "PCM",
-        "Gerar O.S. Preventiva",
-        f"O.S. {numero} aberta para {setor_maq}.",
-    )
-    flash(f"Ordem de Serviço {numero} gerada para '{setor_maq}'!")
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/pcm/excluir/<int:id>", methods=["POST"])
-@requer_login
-def excluir_plano_pcm(id):
-    plano = db.session.get(PlanoPreventivo, id)
-    if plano:
-        nome = plano.maquina
-        db.session.delete(plano)
         db.session.commit()
         registrar_auditoria(
-            "PCM", "Exclusão Preventiva", f"Plano de {nome} excluído."
+            "PCM", "Novo Plano", f"Preventivo cadastrado para {maquina}"
         )
-        flash(f"Plano preventivo de '{nome}' excluído.")
+        flash("Plano preventivo registrado!")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
@@ -5702,224 +5393,280 @@ def importar_excel_pcm():
     nome_orig = os.path.basename(arquivo.filename).strip()
     ext = os.path.splitext(nome_orig)[1].lower()
     if ext not in EXTENSOES_PCM_EXCEL:
-        flash("Formato inválido. Envie apenas arquivos .xlsx ou .xls.")
+        flash("Formato inválido. Envie apenas planilhas Excel (.xlsx ou .xls).")
         return redirect(url_for("central_gestao", tab="pcm"))
 
     conteudo = arquivo.read()
     if not conteudo:
-        flash("O arquivo Excel enviado está vazio.")
+        flash("O arquivo selecionado está vazio.")
         return redirect(url_for("central_gestao", tab="pcm"))
     if len(conteudo) > TAMANHO_MAX_PCM_EXCEL:
-        flash("O arquivo Excel excede o limite máximo de 25 MB.")
+        flash("O arquivo excede o limite de 25 MB.")
         return redirect(url_for("central_gestao", tab="pcm"))
 
     os.makedirs(PCM_FILES_DIR, exist_ok=True)
-    nome_seguro = f"pcm_{secrets.token_hex(8)}{ext}"
-    caminho_salvo = os.path.join(PCM_FILES_DIR, nome_seguro)
+    slug = re.sub(
+        r"[^A-Za-z0-9_-]", "_", os.path.splitext(nome_orig)[0]
+    )[:50]
+    nome_seguro = f"pcm_{slug}_{secrets.token_hex(5)}{ext}"
+    destino = os.path.join(PCM_FILES_DIR, nome_seguro)
 
     try:
-        with open(caminho_salvo, "wb") as f:
+        with open(destino, "wb") as f:
             f.write(conteudo)
 
-        tamanho_kb = round(len(conteudo) / 1024.0, 1)
-        registro = ArquivoPCM(
-            nome_original=nome_orig[:220],
+        reg = ArquivoPCM(
+            nome_original=nome_orig[:200],
             nome_arquivo=nome_seguro,
-            tamanho_kb=tamanho_kb,
+            tamanho_kb=round(len(conteudo) / 1024, 1),
             enviado_por="PCM",
             data_envio=agora_formatado(),
         )
-        db.session.add(registro)
+        db.session.add(reg)
         db.session.commit()
         registrar_auditoria(
             "PCM",
-            "Arquivo Excel Guardado",
-            f"Arquivo '{nome_orig}' salvo para abertura direta no Excel ({tamanho_kb} KB).",
+            "Arquivo Excel Salvo",
+            f"Planilha '{nome_orig}' arquivada no PCM",
         )
         flash(
-            f"Arquivo '{nome_orig}' salvo! Clique em Abrir Excel para abrir na planilha."
+            f"Planilha '{nome_orig}' salva com sucesso para abertura no Excel!"
         )
     except Exception:
         db.session.rollback()
-        if os.path.exists(caminho_salvo):
+        if os.path.exists(destino):
             try:
-                os.remove(caminho_salvo)
+                os.remove(destino)
             except OSError:
                 pass
-        flash("Erro ao guardar o arquivo Excel.")
-
+        flash("Erro ao guardar a planilha Excel no PCM.")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
-@app.route("/pcm/arquivo/<int:id>")
+@app.route("/pcm/arquivo/<int:id>/abrir")
 @requer_login
 def abrir_arquivo_pcm(id):
-    arq = db.session.get(ArquivoPCM, id)
-    if not arq:
+    reg = db.session.get(ArquivoPCM, id)
+    if not reg:
         flash("Arquivo Excel não encontrado.")
         return redirect(url_for("central_gestao", tab="pcm"))
-
-    nome_limpo = os.path.basename(arq.nome_arquivo)
+    nome_limpo = os.path.basename(reg.nome_arquivo)
     caminho = os.path.join(PCM_FILES_DIR, nome_limpo)
     if not os.path.isfile(caminho):
         flash("O arquivo físico não foi encontrado no servidor.")
         return redirect(url_for("central_gestao", tab="pcm"))
-
-    ext = os.path.splitext(arq.nome_original)[1].lower()
-    mime = EXTENSOES_PCM_EXCEL.get(ext, "application/octet-stream")
+    ext = os.path.splitext(nome_limpo)[1].lower()
+    mime = EXTENSOES_PCM_EXCEL.get(
+        ext,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
     return send_file(
         caminho,
         as_attachment=True,
-        download_name=arq.nome_original,
+        download_name=reg.nome_original,
         mimetype=mime,
     )
 
 
-@app.route("/pcm/arquivo/excluir/<int:id>", methods=["POST"])
+@app.route("/pcm/arquivo/<int:id>/excluir", methods=["POST"])
 @requer_login
 def excluir_arquivo_pcm(id):
-    arq = db.session.get(ArquivoPCM, id)
-    if arq:
-        nome_orig = arq.nome_original
-        caminho = os.path.join(PCM_FILES_DIR, os.path.basename(arq.nome_arquivo))
-        db.session.delete(arq)
+    reg = db.session.get(ArquivoPCM, id)
+    if reg:
+        nome_orig = reg.nome_original
+        caminho = os.path.join(
+            PCM_FILES_DIR, os.path.basename(reg.nome_arquivo)
+        )
+        db.session.delete(reg)
         db.session.commit()
-        if os.path.isfile(caminho):
+        if os.path.exists(caminho):
             try:
                 os.remove(caminho)
             except OSError:
                 pass
         registrar_auditoria(
-            "PCM", "Arquivo Excel Removido", f"Arquivo '{nome_orig}' excluído."
+            "PCM", "Arquivo Excel Excluído", f"Planilha '{nome_orig}' removida"
         )
         flash(f"Arquivo '{nome_orig}' removido.")
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/gerar-os/<int:id>", methods=["POST"])
+@requer_login
+def gerar_os_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if not plano:
+        return redirect(url_for("central_gestao", tab="pcm"))
+    with os_lock:
+        num = gerar_numero_os()
+        nova_os = OrdemServico(
+            numero_os=num,
+            solicitante="PCM Automático",
+            setor=f"{plano.maquina} ({plano.setor})"
+            if plano.setor
+            else plano.maquina,
+            titulo=f"Preventiva {plano.frequencia} - {plano.maquina}",
+            descricao=plano.atividade,
+            prioridade="Média",
+            responsavel=plano.responsavel or "Equipe PCM",
+            abertura=agora_formatado(),
+            status="Aberta",
+            tipo_manutencao="Preventiva",
+        )
+        db.session.add(nova_os)
+        db.session.commit()
+        registrar_auditoria(
+            "PCM",
+            "Geração O.S. Preventiva",
+            f"O.S. {num} gerada para {plano.maquina}",
+        )
+        flash(f"O.S. {num} gerada diretamente na fila de manutenção!")
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/concluir/<int:id>", methods=["POST"])
+@requer_login
+def concluir_plano_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        base = parse_data_br(plano.proxima_execucao) or date.today()
+        plano.proxima_execucao = avancar_data(
+            max(base, date.today()), plano.frequencia
+        ).strftime("%d/%m/%Y")
+        plano.status = "Agendado"
+        db.session.commit()
+        registrar_auditoria(
+            "PCM",
+            "Ciclo Concluído",
+            f"{plano.maquina} reagendada para {plano.proxima_execucao}",
+        )
+        flash(
+            f"Preventivo concluído! Próxima data: {plano.proxima_execucao}."
+        )
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/editar/<int:id>", methods=["POST"])
+@requer_login
+def editar_plano_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        proxima = parse_data_br(request.form.get("proxima_execucao"))
+        if proxima:
+            plano.maquina = request.form.get("maquina", "").strip()[:150]
+            plano.codigo_maquina = (
+                request.form.get("codigo_maquina", "").strip().upper()[:50]
+            )
+            plano.setor = request.form.get("setor", "").strip()[:100]
+            plano.frequencia = request.form.get("frequencia", "Mensal")
+            plano.responsavel = request.form.get("responsavel", "").strip()[
+                :100
+            ]
+            plano.atividade = request.form.get("atividade", "").strip()[:2000]
+            plano.proxima_execucao = proxima.strftime("%d/%m/%Y")
+            db.session.commit()
+            flash("Planejamento atualizado!")
+    return redirect(url_for("central_gestao", tab="pcm"))
+
+
+@app.route("/pcm/excluir/<int:id>", methods=["POST"])
+@requer_login
+def excluir_plano_pcm(id):
+    plano = db.session.get(PlanoPreventivo, id)
+    if plano:
+        db.session.delete(plano)
+        db.session.commit()
+        flash("Plano excluído.")
     return redirect(url_for("central_gestao", tab="pcm"))
 
 
 @app.route("/pcm/excel")
 @requer_login
 def excel_pcm():
-    planos = PlanoPreventivo.query.order_by(PlanoPreventivo.id.asc()).all()
-    hoje_dt = date.today()
-    df = pd.DataFrame(
-        [
-            {
-                "Máquina": p.maquina,
-                "Tag": p.codigo_maquina,
-                "Setor": p.setor,
-                "Frequência": p.frequencia,
-                "Próxima Execução": p.proxima_execucao,
-                "Responsável": p.responsavel,
-                "Status": status_plano(p, hoje_dt),
-                "Roteiro Preventivo": p.atividade,
-            }
-            for p in planos
-        ],
-        columns=[
-            "Máquina",
-            "Tag",
-            "Setor",
-            "Frequência",
-            "Próxima Execução",
-            "Responsável",
-            "Status",
-            "Roteiro Preventivo",
-        ],
-    )
-    registrar_auditoria(
-        "PCM", "Exportar Excel", "Cronograma PCM exportado."
-    )
+    planos = PlanoPreventivo.query.all()
+    hoje = date.today()
+    dados = [
+        {
+            "Máquina": p.maquina,
+            "Tag": p.codigo_maquina or "",
+            "Setor": p.setor or "",
+            "Frequência": p.frequencia,
+            "Próxima Execução": p.proxima_execucao,
+            "Responsável": p.responsavel or "",
+            "Status": status_plano(p, hoje),
+            "Roteiro": p.atividade,
+        }
+        for p in planos
+    ]
     return gerar_excel(
-        df, "Cronograma PCM", "cronograma_pcm", coluna_status="Status"
+        pd.DataFrame(dados), "PCM", "cronograma_pcm", coluna_status="Status"
     )
 
 
 @app.route("/compras/cadastrar", methods=["POST"])
 @requer_login
 def cadastrar_compras():
-    numero_sc = request.form.get("numero_sc", "").strip()
-    tipo_sc = request.form.get("tipo_sc", "S.C. Emergencial").strip()
     solicitante = request.form.get("solicitante", "").strip()
-    setor_solicitante = request.form.get("setor_solicitante", "").strip()
-    responsaveis_duvidas = request.form.get("responsaveis_duvidas", "").strip()
-    centro_custo = request.form.get("centro_custo", "").strip()
     objeto_solicitacao = request.form.get("objeto_solicitacao", "").strip()
-    data_solicitacao = request.form.get("data_solicitacao", "").strip()
-
     descritivos = request.form.getlist("descritivo_material[]")
     quantidades = request.form.getlist("quantidade[]")
     unidades = request.form.getlist("unidade[]")
-    links_ref = request.form.getlist("link_referencia[]")
+    links = request.form.getlist("link_referencia[]")
 
-    if not solicitante or not objeto_solicitacao or not data_solicitacao:
-        flash("Solicitante, Objeto e Data são obrigatórios.")
+    if not solicitante or not objeto_solicitacao or not descritivos:
+        flash("Preencha todos os campos obrigatórios da S.C.")
         return redirect(url_for("central_gestao", tab="compras"))
+
+    tipo_sc = request.form.get("tipo_sc", "S.C. Emergencial").strip()
     if tipo_sc not in TIPOS_SC_VALIDOS:
         tipo_sc = "S.C. Emergencial"
-
-    itens_validos = []
-    for idx, desc in enumerate(descritivos):
-        d_limpo = (desc or "").strip()
-        if not d_limpo:
-            continue
-        try:
-            q_val = max(
-                1, int(quantidades[idx] if idx < len(quantidades) else 1)
-            )
-        except ValueError:
-            q_val = 1
-        u_val = (
-            unidades[idx] if idx < len(unidades) and unidades[idx] else "Un"
-        )
-        l_val = (
-            links_ref[idx].strip()
-            if idx < len(links_ref) and links_ref[idx]
-            else ""
-        )
-        itens_validos.append({
-            "descritivo": d_limpo,
-            "quantidade": q_val,
-            "unidade": u_val,
-            "link_referencia": l_val,
-        })
-
-    if not itens_validos:
-        flash("Adicione pelo menos um item na solicitação.")
-        return redirect(url_for("central_gestao", tab="compras"))
+    dt = parse_data_br(request.form.get("data_solicitacao")) or date.today()
 
     with sc_lock:
-        num_final = numero_sc if numero_sc else gerar_numero_sc()
+        num_sc = (
+            request.form.get("numero_sc", "").strip() or gerar_numero_sc()
+        )
         nova_sc = SolicitacaoCompra(
-            numero_sc=num_final,
+            numero_sc=num_sc[:100],
             tipo_sc=tipo_sc,
-            solicitante=solicitante,
-            setor_solicitante=setor_solicitante,
-            responsaveis_duvidas=responsaveis_duvidas,
-            centro_custo=centro_custo,
-            objeto_solicitacao=objeto_solicitacao,
-            data_solicitacao=data_solicitacao,
+            solicitante=solicitante[:100],
+            setor_solicitante=request.form.get(
+                "setor_solicitante", "Manutenção"
+            ).strip()[:100],
+            responsaveis_duvidas=request.form.get(
+                "responsaveis_duvidas", ""
+            ).strip()[:150],
+            centro_custo=request.form.get("centro_custo", "").strip()[:150],
+            objeto_solicitacao=objeto_solicitacao[:250],
+            data_solicitacao=dt.strftime("%d/%m/%Y"),
             status_aprovacao="Aguardando Aprovação",
         )
-        db.session.add(nova_sc)
-        db.session.flush()
-        for item in itens_validos:
-            db.session.add(
+        for i in range(len(descritivos)):
+            desc = descritivos[i].strip()
+            if not desc:
+                continue
+            try:
+                q = max(1, int(quantidades[i]))
+            except (ValueError, IndexError):
+                q = 1
+            unid = unidades[i].strip() if i < len(unidades) else "Un"
+            lnk = links[i].strip() if i < len(links) else ""
+            nova_sc.itens.append(
                 ItemSolicitacaoCompra(
-                    solicitacao_id=nova_sc.id,
-                    descritivo=item["descritivo"],
-                    quantidade=item["quantidade"],
-                    unidade=item["unidade"],
-                    link_referencia=item["link_referencia"],
+                    descritivo=desc,
+                    quantidade=q,
+                    unidade=unid,
+                    link_referencia=lnk,
                 )
             )
+        db.session.add(nova_sc)
         db.session.commit()
-
-    registrar_auditoria(
-        "Compras (S.C.)",
-        "Criação S.C.",
-        f"{num_final} ({tipo_sc}) - {objeto_solicitacao}",
-    )
-    flash(f"Solicitação {num_final} registrada com {len(itens_validos)} item(ns)!")
+        registrar_auditoria(
+            "Compras",
+            "Nova S.C.",
+            f"{num_sc} registrada por {solicitante} ({tipo_sc})",
+        )
+        flash(f"Solicitação {num_sc} registrada com sucesso!")
     return redirect(url_for("central_gestao", tab="compras"))
 
 
@@ -5928,18 +5675,27 @@ def cadastrar_compras():
 def atualizar_status_sc(id):
     sc = db.session.get(SolicitacaoCompra, id)
     if not sc:
-        return jsonify({"ok": False, "erro": "S.C. não encontrada."}), 404
+        return jsonify({"ok": False, "erro": "Não encontrada"}), 404
     novo_status = request.form.get("status_aprovacao", "").strip()
     if novo_status not in STATUS_SC_VALIDOS:
-        return jsonify({"ok": False, "erro": "Status inválido."}), 400
+        return jsonify({"ok": False, "erro": "Status inválido"}), 400
     sc.status_aprovacao = novo_status
     db.session.commit()
     registrar_auditoria(
-        "Compras (S.C.)",
-        "Atualização Status S.C.",
-        f"{sc.numero_sc} -> {novo_status}",
+        "Compras",
+        "Status S.C.",
+        f"{sc.numero_sc} alterada para {novo_status}",
     )
-    return jsonify({"ok": True, "status": novo_status})
+    return jsonify({"ok": True})
+
+
+@app.route("/compras/imprimir/<int:id>")
+@requer_login
+def imprimir_sc(id):
+    sc = db.session.get(SolicitacaoCompra, id)
+    if not sc:
+        return "S.C. não encontrada", 404
+    return renderizar(HTML_IMPRESSAO_SC, sc=sc)
 
 
 @app.route("/compras/excluir/<int:id>", methods=["POST"])
@@ -5951,91 +5707,232 @@ def excluir_compras(id):
         db.session.delete(sc)
         db.session.commit()
         registrar_auditoria(
-            "Compras (S.C.)", "Exclusão S.C.", f"{num} excluída."
+            "Compras", "Exclusão S.C.", f"{num} removida"
         )
-        flash(f"Solicitação {num} excluída.")
+        flash("Solicitação excluída.")
     return redirect(url_for("central_gestao", tab="compras"))
-
-
-@app.route("/compras/imprimir/<int:id>")
-@requer_login
-def imprimir_sc(id):
-    sc = db.session.get(SolicitacaoCompra, id)
-    if not sc:
-        flash("Solicitação não encontrada.")
-        return redirect(url_for("central_gestao", tab="compras"))
-    return renderizar(HTML_IMPRESSAO_SC, sc=sc)
 
 
 @app.route("/compras/excel")
 @requer_login
 def excel_compras():
-    compras = SolicitacaoCompra.query.order_by(SolicitacaoCompra.id.desc()).all()
-    linhas_export = []
-    for sc in compras:
-        for it in sc.itens:
-            linhas_export.append({
-                "Código S.C.": sc.numero_sc,
-                "Criticidade": sc.tipo_sc,
-                "Solicitante": sc.solicitante,
-                "Setor": sc.setor_solicitante,
-                "Dúvidas Técnicas": sc.responsaveis_duvidas,
-                "Centro de Custo": sc.centro_custo,
-                "Objeto": sc.objeto_solicitacao,
-                "Data": sc.data_solicitacao,
-                "Status": sc.status_aprovacao,
-                "Item": it.descritivo,
+    compras = SolicitacaoCompra.query.order_by(
+        SolicitacaoCompra.id.desc()
+    ).all()
+    dados = []
+    for c in compras:
+        for idx, it in enumerate(c.itens, start=1):
+            dados.append({
+                "Número S.C.": c.numero_sc,
+                "Classificação": c.tipo_sc,
+                "Status": c.status_aprovacao,
+                "Data": c.data_solicitacao,
+                "Solicitante": c.solicitante,
+                "Centro de Custo": c.centro_custo,
+                "Objeto": c.objeto_solicitacao,
+                "Item": idx,
+                "Descritivo": it.descritivo,
                 "Qtd": it.quantidade,
                 "Unidade": it.unidade,
-                "Referência / Link": it.link_referencia,
+                "Link / Referência": it.link_referencia or "",
             })
-    df = pd.DataFrame(
-        linhas_export,
-        columns=[
-            "Código S.C.",
-            "Criticidade",
-            "Solicitante",
-            "Setor",
-            "Dúvidas Técnicas",
-            "Centro de Custo",
-            "Objeto",
-            "Data",
-            "Status",
-            "Item",
-            "Qtd",
-            "Unidade",
-            "Referência / Link",
-        ],
-    )
-    registrar_auditoria(
-        "Compras (S.C.)", "Exportar Excel", "Planilha de compras exportada."
-    )
     return gerar_excel(
-        df,
-        "Solicitacoes_Compras",
+        pd.DataFrame(dados),
+        "Compras SC",
         "solicitacoes_compras",
         coluna_status="Status",
     )
 
 
-def obter_ip_local():
+@app.route("/governanca/backup-json")
+@requer_login
+def exportar_backup_json():
+    dados = serializar_banco_completo()
+    conteudo = json.dumps(dados, ensure_ascii=False, indent=2).encode("utf-8")
+    memoria = BytesIO(conteudo)
+    memoria.seek(0)
+    nome = f"backup_completo_jamaica_{datetime.now():%Y%m%d_%H%M%S}.json"
+    registrar_auditoria(
+        "Governança",
+        "Exportação Backup JSON",
+        "Cópia completa do banco exportada",
+    )
+    return send_file(
+        memoria,
+        as_attachment=True,
+        download_name=nome,
+        mimetype="application/json",
+    )
+
+
+@app.route("/governanca/backup-excel-completo")
+@requer_login
+def exportar_backup_excel_completo():
+    ordens = OrdemServico.query.order_by(OrdemServico.id.desc()).all()
+    df_os = pd.DataFrame([
+        {
+            "Número O.S.": o.numero_os,
+            "Solicitante": o.solicitante,
+            "Máquina / Setor": o.setor or "",
+            "Causa": o.titulo or "",
+            "Prioridade": o.prioridade,
+            "Responsável": o.responsavel or "",
+            "Tipo Manutenção": o.tipo_manutencao or "",
+            "Funcionários": o.funcionarios or "",
+            "Tempo Apontado": (
+                horas_decimais_para_hhmm(o.horas_trabalhadas)
+                if o.horas_trabalhadas
+                else ""
+            ),
+            "Laudo Técnico": o.observacao_tecnica or "",
+            "Status": o.status,
+            "Abertura": o.abertura,
+            "Finalização": o.finalizacao or "",
+            "Lead Time": o.tempo_total or "",
+        }
+        for o in ordens
+    ])
+
+    pecas = ItemEstoque.query.order_by(ItemEstoque.nome.asc()).all()
+    df_est = pd.DataFrame([
+        {
+            "Código": p.codigo,
+            "Peça": p.nome,
+            "Categoria": p.categoria or "",
+            "Localização": p.localizacao or "",
+            "Saldo Atual": p.quantidade,
+            "Estoque Mínimo": p.estoque_minimo,
+            "Status": (
+                "Baixo Estoque"
+                if p.quantidade <= p.estoque_minimo
+                else "Normal"
+            ),
+            "Última Atualização": p.ultima_atualizacao,
+        }
+        for p in pecas
+    ])
+
+    maquinas = MaquinaSpare.query.order_by(MaquinaSpare.maquina.asc()).all()
+    rows_spare = []
+    for m in maquinas:
+        if m.pecas:
+            for ps in m.pecas:
+                rows_spare.append({
+                    "Máquina": m.maquina,
+                    "Modelo": m.modelo,
+                    "Setor": m.setor or "",
+                    "Peça": ps.nome_peca,
+                    "Código": ps.codigo_peca or "",
+                    "Qtd": ps.quantidade,
+                    "Observação": ps.observacao or "",
+                })
+        else:
+            rows_spare.append({
+                "Máquina": m.maquina,
+                "Modelo": m.modelo,
+                "Setor": m.setor or "",
+                "Peça": "",
+                "Código": "",
+                "Qtd": 0,
+                "Observação": m.pecas_necessarias or "",
+            })
+    df_spare = pd.DataFrame(rows_spare)
+
+    planos = PlanoPreventivo.query.all()
+    hoje = date.today()
+    df_pcm = pd.DataFrame([
+        {
+            "Máquina": p.maquina,
+            "Tag": p.codigo_maquina or "",
+            "Setor": p.setor or "",
+            "Frequência": p.frequencia,
+            "Próxima Execução": p.proxima_execucao,
+            "Responsável": p.responsavel or "",
+            "Status": status_plano(p, hoje),
+            "Roteiro": p.atividade,
+        }
+        for p in planos
+    ])
+
+    compras = SolicitacaoCompra.query.order_by(
+        SolicitacaoCompra.id.desc()
+    ).all()
+    rows_sc = []
+    for c in compras:
+        for idx, it in enumerate(c.itens, start=1):
+            rows_sc.append({
+                "Número S.C.": c.numero_sc,
+                "Classificação": c.tipo_sc,
+                "Status": c.status_aprovacao,
+                "Data": c.data_solicitacao,
+                "Solicitante": c.solicitante,
+                "Centro de Custo": c.centro_custo,
+                "Objeto": c.objeto_solicitacao,
+                "Item": idx,
+                "Descritivo": it.descritivo,
+                "Qtd": it.quantidade,
+                "Unidade": it.unidade,
+                "Link": it.link_referencia or "",
+            })
+    df_sc = pd.DataFrame(rows_sc)
+
+    registrar_auditoria(
+        "Governança",
+        "Exportação Backup Excel",
+        "Planilha consolidada multi-abas gerada",
+    )
+    return gerar_excel_multiplas_abas(
+        [
+            ("Ordens de Servico", df_os, "Status"),
+            ("Estoque", df_est, "Status"),
+            ("Spare Parts", df_spare, None),
+            ("Cronograma PCM", df_pcm, "Status"),
+            ("Compras SC", df_sc, "Status"),
+        ],
+        "backup_geral_jamaica",
+    )
+
+
+@app.route("/governanca/backup")
+@requer_login
+def baixar_backup_db():
+    if IS_POSTGRES or not os.path.exists(DB_PATH):
+        flash(
+            "O banco atual roda na nuvem (PostgreSQL). Utilize 'Exportar Banco"
+            " Completo (.JSON)' ou 'Planilha Geral Multi-Abas (.XLSX)'."
+        )
+        return redirect(url_for("central_gestao", tab="governanca"))
+    registrar_auditoria(
+        "Governança",
+        "Download Backup",
+        "Cópia manual do banco os.db baixada",
+    )
+    return send_file(
+        DB_PATH,
+        as_attachment=True,
+        download_name=f"os_backup_manual_{datetime.now():%Y%m%d_%H%M}.db",
+    )
+
+
+def obter_ip_rede():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
-        s.close()
-        return ip
     except Exception:
-        return "127.0.0.1"
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
 
 
 if __name__ == "__main__":
     porta = int(os.environ.get("PORT", 5000))
-    debug_mode = os.environ.get("FLASK_DEBUG", "0").strip() == "1"
-    print("============================================================")
-    print("  CENTRAL DE MANUTENÇÃO — JAMAICA")
-    print(f"  Banco de Dados: {'PostgreSQL' if IS_POSTGRES else 'SQLite'}")
-    print(f"  Acesso local:   http://127.0.0.1:{porta}")
-    print(f"  Acesso rede:    http://{obter_ip_local()}:{porta}")
-    print("============================================================")
-    app.run(host="0.0.0.0", port=porta, debug=debug_mode)
+    ip_local = obter_ip_rede()
+    print("=" * 68)
+    print("  CENTRAL DE MANUTENÇÃO JAMAICA — INICIADA COM SUCESSO")
+    print(f"  Banco de Dados : {'PostgreSQL (Nuvem)' if IS_POSTGRES else 'SQLite Local (os.db)'}")
+    print(f"  Acesso Local   : http://127.0.0.1:{porta}")
+    print(f"  Acesso na Rede : http://{ip_local}:{porta}")
+    print("=" * 68)
+    app.run(host="0.0.0.0", port=porta, debug=False, threaded=True)
